@@ -151,7 +151,7 @@ function render_post(string $token, array $pending, string $redirect_uri, string
     try {
         $code_challenge = (string) ($pending['code_challenge'] ?? '');
         $code_challenge_method = (string) ($pending['code_challenge_method'] ?? '');
-        $scope = (string) ($pending['scope'] ?? 'mcp');
+        $scope = (string) ($pending['scope'] ?? \Novamira\OAuth\FULL_ACCESS_SCOPE);
         $client_id = (string) ($pending['client_id'] ?? '');
         $user_id = (int) ($pending['user_id'] ?? 0);
 
@@ -268,15 +268,15 @@ function render_form(string $token, string $client_name, string $redirect_uri, s
 function consent_grant_details(string $scope): array
 {
     return [
-        'label' => __('full access to your WordPress site', domain: 'novamira'),
+        'label' => __('full access to the REST API of your WordPress site', domain: 'novamira'),
         'description' => __(
-            'Full access permits execution of Novamira capabilities through MCP and REST, including REST-visible abilities registered by compatible third-party plugins.',
+            'Full access lets the application use the whole REST API of this site with your user account and permissions, as an application password does. That includes Novamira abilities through MCP and REST, and REST-visible abilities registered by compatible third-party plugins. It does not sign the application in to the WordPress dashboard or other pages.',
             domain: 'novamira',
         ),
         'risks' => [
             __('Execute PHP and WP-CLI.', domain: 'novamira'),
             __('Read, write, and delete server files.', domain: 'novamira'),
-            __('Change WordPress content and settings.', domain: 'novamira'),
+            __('Change WordPress content, users, and settings through the REST API.', domain: 'novamira'),
             __('Create temporary administrator access.', domain: 'novamira'),
             __('Execute REST-visible abilities registered by compatible plugins.', domain: 'novamira'),
         ],

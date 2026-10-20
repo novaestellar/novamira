@@ -77,6 +77,12 @@ if (!function_exists('wp_set_current_user')) {
 if (!function_exists('get_current_user_id')) {
     function get_current_user_id(): int
     {
+        // Lazy resolution, as wp_get_current_user() runs determine_current_user on first use.
+        $resolve = $GLOBALS['novamira_test_resolve_current_user'] ?? null;
+        if ($resolve instanceof Closure) {
+            unset($GLOBALS['novamira_test_resolve_current_user']);
+            $resolve();
+        }
         return (int) ($GLOBALS['novamira_test_current_user_id'] ?? 0);
     }
 }
@@ -320,6 +326,7 @@ final class MiddlewareTest extends TestCase
             $GLOBALS['novamira_test_home'],
             $GLOBALS['novamira_test_abilities'],
             $GLOBALS['novamira_test_rest_url_throws'],
+            $GLOBALS['novamira_test_resolve_current_user'],
         );
         \Novamira\OAuth\Middleware\reset_request_context();
     }
@@ -328,7 +335,7 @@ final class MiddlewareTest extends TestCase
     {
         $GLOBALS['novamira_test_home'] = 'https://example.test';
         self::assertSame(
-            'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource", scope="mcp"',
+            'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource", scope="full_access"',
             \Novamira\OAuth\Middleware\www_authenticate_header(),
         );
     }
@@ -339,7 +346,7 @@ final class MiddlewareTest extends TestCase
         // install the challenge points at /subsite/.well-known/..., which this install serves.
         $GLOBALS['novamira_test_home'] = 'https://example.com/subsite';
         self::assertSame(
-            'Bearer resource_metadata="https://example.com/subsite/.well-known/oauth-protected-resource", scope="mcp"',
+            'Bearer resource_metadata="https://example.com/subsite/.well-known/oauth-protected-resource", scope="full_access"',
             \Novamira\OAuth\Middleware\www_authenticate_header(),
         );
     }
@@ -377,11 +384,11 @@ final class MiddlewareTest extends TestCase
 
     /** @param array{0: string, 1: string, 2: bool} $case */
     #[DataProvider('abilityRouteProvider')]
-    public function testAbilityRouteAllowlistUsesExactRouteAndMethod(array $case): void
+    public function testChallengeRoutesUseExactRouteAndMethod(array $case): void
     {
-        [$method, $route, $allowed] = $case;
+        [$method, $route, $challenged] = $case;
 
-        self::assertSame($allowed, \Novamira\OAuth\Middleware\oauth_identity_may_use_route($route, $method));
+        self::assertSame($challenged, \Novamira\OAuth\Middleware\is_oauth_challenge_route($route, $method));
     }
 
     /** @return iterable<string, array{array{string, string, bool}}> */
@@ -409,6 +416,7 @@ final class MiddlewareTest extends TestCase
                 $called = true;
                 return ['user_id' => 7, 'scopes' => ['mcp']];
             },
+            is_rest_request: true,
         );
 
         self::assertFalse($user);
@@ -426,6 +434,7 @@ final class MiddlewareTest extends TestCase
                 $called = true;
                 return ['user_id' => 73, 'scopes' => ['mcp']];
             },
+            is_rest_request: true,
         );
         $prior = new WP_Error('another_auth_error', 'Unrelated authentication result.', ['status' => 403]);
 
@@ -447,6 +456,7 @@ final class MiddlewareTest extends TestCase
                 $called = true;
                 return ['user_id' => 73, 'scopes' => ['mcp']];
             },
+            is_rest_request: true,
         );
 
         self::assertFalse($resolved);
@@ -484,11 +494,36 @@ final class MiddlewareTest extends TestCase
             static function (): array {
                 throw OAuthServerException::accessDenied('Simulated invalid token.');
             },
+            is_rest_request: true,
         );
 
         self::assertFalse($user);
         self::assertSame(0, get_current_user_id());
         $error = \Novamira\OAuth\Middleware\reject_invalid_bearer(null);
+        self::assertInstanceOf(WP_Error::class, $error);
+        self::assertSame('rest_oauth_error', $error->get_error_code());
+        self::assertSame(401, $error->get_error_data()['status']);
+    }
+
+    #[RunInSeparateProcess]
+    #[PreserveGlobalState(false)]
+    public function testRejectionResolvesAUserNothingHasResolvedYet(): void
+    {
+        // serve_request() cleared the anonymous user cached before REST_REQUEST was defined, and no
+        // callback has asked for the user again by the time the authentication errors are checked.
+        $GLOBALS['novamira_test_resolve_current_user'] = function (): void {
+            \Novamira\OAuth\Middleware\resolve_bearer_identity_using(
+                false,
+                'Bearer ' . $this->jwtForAudience(\Novamira\OAuth\resource_identifier()),
+                static function (): array {
+                    throw OAuthServerException::accessDenied('Simulated invalid token.');
+                },
+                is_rest_request: true,
+            );
+        };
+
+        $error = \Novamira\OAuth\Middleware\reject_invalid_bearer(null);
+
         self::assertInstanceOf(WP_Error::class, $error);
         self::assertSame('rest_oauth_error', $error->get_error_code());
         self::assertSame(401, $error->get_error_data()['status']);
@@ -500,6 +535,7 @@ final class MiddlewareTest extends TestCase
             false,
             'Bearer ' . $this->jwtForAudience([\Novamira\OAuth\resource_identifier()]),
             static fn(): array => ['user_id' => 73, 'scopes' => ['mcp']],
+            is_rest_request: true,
         );
 
         self::assertSame(73, $resolved);
@@ -524,6 +560,7 @@ final class MiddlewareTest extends TestCase
                 $called = true;
                 return ['user_id' => 73, 'scopes' => ['mcp']];
             },
+            is_rest_request: true,
         );
 
         self::assertFalse($resolved);
@@ -557,6 +594,7 @@ final class MiddlewareTest extends TestCase
                     $called = true;
                     return ['user_id' => 73, 'scopes' => ['mcp']];
                 },
+                is_rest_request: true,
             );
             self::assertSame($existingUser, $resolved);
             self::assertFalse($called);
@@ -564,63 +602,164 @@ final class MiddlewareTest extends TestCase
         }
     }
 
-    public function testQueryParameterCannotSpoofTheAuthoritativeRoute(): void
+    public function testPreDispatchResultIsPreservedOnAnyRoute(): void
     {
         $_GET['rest_route'] = '/wp-abilities/v1/abilities';
         $_SERVER['REQUEST_URI'] = '/wp-json/wp/v2/posts?rest_route=/wp-abilities/v1/abilities';
         $this->authenticateOauthUser();
+        $preempted = new WP_REST_Response(['preempted' => true]);
 
-        $result = \Novamira\OAuth\Middleware\authorize_routed_request(
-            new WP_REST_Response(['preempted' => true]),
+        self::assertSame($preempted, \Novamira\OAuth\Middleware\authorize_routed_request(
+            $preempted,
             null,
             new WP_REST_Request('GET', '/wp/v2/posts'),
-        );
-
-        self::assertInstanceOf(WP_Error::class, $result);
-        self::assertSame('rest_oauth_route_forbidden', $result->get_error_code());
-        self::assertSame(403, $result->get_error_data()['status']);
+        ));
     }
 
-    #[DataProvider('excludedRouteProvider')]
-    public function testValidBearerIsRejectedOutsideTheAllowlist(string $method, string $route): void
+    #[DataProvider('restRouteProvider')]
+    public function testValidBearerIsAcceptedOnEveryRestRoute(string $method, string $route): void
     {
         $this->authenticateOauthUser();
 
-        $result = \Novamira\OAuth\Middleware\authorize_routed_request(
+        self::assertNull(\Novamira\OAuth\Middleware\authorize_routed_request(
             null,
             null,
             new WP_REST_Request($method, $route),
-        );
-
-        self::assertInstanceOf(WP_Error::class, $result);
-        self::assertSame('rest_oauth_route_forbidden', $result->get_error_code());
+        ));
     }
 
     /** @return iterable<string, array{string, string}> */
-    public static function excludedRouteProvider(): iterable
+    public static function restRouteProvider(): iterable
     {
+        yield 'own user' => ['GET', '/wp/v2/users/me'];
+        yield 'create post' => ['POST', '/wp/v2/posts'];
+        yield 'settings' => ['POST', '/wp/v2/settings'];
+        yield 'plugins' => ['GET', '/wp/v2/plugins'];
+        yield 'batch' => ['POST', '/batch/v1'];
+        yield 'third-party globals' => ['GET', '/elementor/v1/globals'];
         yield 'upload' => ['POST', '/novamira/v1/upload/example'];
         yield 'temporary administrator' => ['POST', '/novamira/v1/admin-access'];
-        yield 'chat' => ['POST', '/novamira/v1/chat'];
-        yield 'browser runtime' => ['POST', '/novamira/v1/gutenberg/finalize'];
         yield 'canonical Application Password MCP' => ['POST', '/mcp/novamira'];
         yield 'legacy MCP' => ['POST', '/mcp/mcp-adapter-default-server'];
-        yield 'unrelated REST' => ['GET', '/wp/v2/posts'];
+        yield 'OAuth MCP' => ['POST', '/mcp/novamira-oauth'];
+        yield 'ability run' => ['POST', '/novamira/v1/abilities/novamira/write-file/run'];
     }
 
-    public function testAllowedRouteStillRequiresCurrentManagementPermission(): void
+    public function testNestedDispatchUnderTheTokenIsAccepted(): void
+    {
+        // An ability run that dispatches internal REST requests (Elementor resolving its globals
+        // through rest_do_request(), for example) passes the same filter once per request.
+        $this->authenticateOauthUser();
+
+        foreach ([
+            new WP_REST_Request('POST', '/novamira/v1/abilities/novamira/elementor-set-content/run'),
+            new WP_REST_Request('GET', '/elementor/v1/globals'),
+            new WP_REST_Request('GET', '/wp/v2/types/post'),
+            new WP_REST_Request('POST', '/novamira/v1/abilities/novamira/elementor-set-content/run'),
+        ] as $request) {
+            self::assertNull(\Novamira\OAuth\Middleware\authorize_routed_request(null, null, $request));
+        }
+    }
+
+    public function testInternalRequestUnderAnotherUserIsLeftToTheRoute(): void
     {
         $this->authenticateOauthUser();
         $GLOBALS['novamira_test_current_user_can_manage'] = false;
+        $GLOBALS['novamira_test_current_user_id'] = 0;
+        $calls = $GLOBALS['novamira_test_current_user_can_manage_calls'] ?? 0;
 
-        $result = \Novamira\OAuth\Middleware\authorize_routed_request(
+        self::assertNull(\Novamira\OAuth\Middleware\authorize_routed_request(
             null,
             null,
-            new WP_REST_Request('GET', '/wp-abilities/v1/abilities'),
+            new WP_REST_Request('GET', '/wp/v2/posts'),
+        ));
+        self::assertSame($calls, $GLOBALS['novamira_test_current_user_can_manage_calls'] ?? 0);
+    }
+
+    public function testTokenIsIgnoredOutsideARestRequest(): void
+    {
+        $called = false;
+        $resolved = \Novamira\OAuth\Middleware\resolve_bearer_identity_using(
+            false,
+            'Bearer ' . $this->jwtForAudience(\Novamira\OAuth\resource_identifier()),
+            static function () use (&$called): array {
+                $called = true;
+                return ['user_id' => 73, 'scopes' => ['full_access']];
+            },
+            is_rest_request: false,
         );
 
-        self::assertInstanceOf(WP_Error::class, $result);
-        self::assertSame(403, $result->get_error_data()['status']);
+        self::assertFalse($resolved);
+        self::assertFalse($called);
+        self::assertSame(0, get_current_user_id());
+        self::assertNull(\Novamira\OAuth\Middleware\request_oauth_identity());
+        // Anonymous, not refused: no 401 is waiting for a later REST check.
+        self::assertNull(\Novamira\OAuth\Middleware\request_authentication_error());
+    }
+
+    public function testInvalidTokenOutsideARestRequestIsNotRefused(): void
+    {
+        $resolved = \Novamira\OAuth\Middleware\resolve_bearer_identity_using(
+            false,
+            'Bearer ' . $this->jwtForAudience(\Novamira\OAuth\resource_identifier()),
+            static function (): array {
+                throw OAuthServerException::accessDenied('Simulated invalid token.');
+            },
+            is_rest_request: false,
+        );
+
+        self::assertFalse($resolved);
+        self::assertNull(\Novamira\OAuth\Middleware\request_authentication_error());
+    }
+
+    public function testEarlyAnonymousResolutionIsRedoneForTheRestRequest(): void
+    {
+        $token = 'Bearer ' . $this->jwtForAudience(\Novamira\OAuth\resource_identifier());
+        $validator = static fn(): array => ['user_id' => 73, 'scopes' => ['mcp']];
+
+        // A plugin asked for the current user at init, before REST_REQUEST was defined.
+        self::assertFalse(\Novamira\OAuth\Middleware\resolve_bearer_identity_using(
+            false,
+            $token,
+            $validator,
+            is_rest_request: false,
+        ));
+        // WP_REST_Server::serve_request() cleared the cached anonymous user and resolved it again.
+        self::assertSame(73, \Novamira\OAuth\Middleware\resolve_bearer_identity_using(
+            false,
+            $token,
+            $validator,
+            is_rest_request: true,
+        ));
+        self::assertSame(['user_id' => 73, 'scopes' => ['mcp']], \Novamira\OAuth\Middleware\request_oauth_identity());
+    }
+
+    public function testProductionEntryPointIgnoresTheTokenOutsideRest(): void
+    {
+        self::assertFalse(defined('REST_REQUEST'));
+        $_SERVER['HTTP_AUTHORIZATION'] = 'Bearer ' . $this->jwtForAudience(\Novamira\OAuth\resource_identifier());
+
+        self::assertFalse(\Novamira\OAuth\Middleware\resolve_bearer_identity(false));
+        self::assertSame(0, get_current_user_id());
+        self::assertNull(\Novamira\OAuth\Middleware\request_authentication_error());
+    }
+
+    public function testEveryRouteStillRequiresCurrentManagementPermission(): void
+    {
+        foreach ([
+            new WP_REST_Request('GET', '/wp-abilities/v1/abilities'),
+            new WP_REST_Request('POST', '/wp/v2/posts'),
+            new WP_REST_Request('GET', '/wp/v2/users/me'),
+        ] as $request) {
+            $this->authenticateOauthUser();
+            $GLOBALS['novamira_test_current_user_can_manage'] = false;
+
+            $result = \Novamira\OAuth\Middleware\authorize_routed_request(null, null, $request);
+
+            self::assertInstanceOf(WP_Error::class, $result);
+            self::assertSame('rest_oauth_error', $result->get_error_code());
+            self::assertSame(403, $result->get_error_data()['status']);
+        }
     }
 
     public function testFullAccessGrantAllowsMcpAndEveryAbilityRoute(): void
@@ -639,12 +778,13 @@ final class MiddlewareTest extends TestCase
         }
     }
 
-    public function testAlreadyIssuedAbilityScopesAreFullAccessMigrationAliases(): void
+    public function testEveryScopeSynonymIsAFullAccessGrant(): void
     {
-        foreach (['abilities', 'abilities:read'] as $scope) {
+        foreach (['full_access', 'mcp', 'abilities', 'abilities:read', 'read', 'write'] as $scope) {
             foreach ([
                 new WP_REST_Request('POST', '/mcp/novamira-oauth'),
                 new WP_REST_Request('POST', '/novamira/v1/abilities/novamira/write-file/run'),
+                new WP_REST_Request('POST', '/wp/v2/posts'),
             ] as $request) {
                 $this->authenticateOauthUser([$scope]);
                 self::assertNull(\Novamira\OAuth\Middleware\authorize_routed_request(null, null, $request));
@@ -654,31 +794,26 @@ final class MiddlewareTest extends TestCase
 
     public function testEveryProtectedRouteChallengesForTheSingleFullAccessScope(): void
     {
-        self::assertSame(
-            'mcp',
-            \Novamira\OAuth\Middleware\route_required_scope('/wp-abilities/v1/abilities', 'GET'),
-        );
-        self::assertSame(
-            'mcp',
-            \Novamira\OAuth\Middleware\route_required_scope(
-                '/novamira/v1/abilities/novamira/read-file/run',
-                'POST',
-            ),
-        );
-        self::assertSame(
-            'mcp',
-            \Novamira\OAuth\Middleware\route_required_scope(
-                '/novamira/v1/abilities/novamira/write-file/run',
-                'POST',
-            ),
-        );
-        self::assertSame('mcp', \Novamira\OAuth\Middleware\route_required_scope('/mcp/novamira-oauth', 'POST'));
+        foreach ([
+            ['GET', '/wp-abilities/v1/abilities'],
+            ['POST', '/novamira/v1/abilities/novamira/read-file/run'],
+            ['POST', '/novamira/v1/abilities/novamira/write-file/run'],
+            ['POST', '/mcp/novamira-oauth'],
+        ] as [$method, $route]) {
+            self::assertTrue(\Novamira\OAuth\Middleware\is_oauth_challenge_route($route, $method));
+        }
+        self::assertFalse(\Novamira\OAuth\Middleware\is_oauth_challenge_route('/wp/v2/posts', 'GET'));
+        self::assertNull(\Novamira\OAuth\Middleware\challenge_unauthenticated(
+            null,
+            null,
+            new WP_REST_Request('GET', '/wp/v2/posts'),
+        ));
 
         $response = $this->dispatchAgainstDenyingPermissionCallback(
             new WP_REST_Request('POST', '/novamira/v1/abilities/novamira/write-file/run'),
         );
         self::assertInstanceOf(WP_REST_Response::class, $response);
-        self::assertStringContainsString('scope="mcp"', $response->headers['WWW-Authenticate']);
+        self::assertStringContainsString('scope="full_access"', $response->headers['WWW-Authenticate']);
     }
 
     public function testUnauthenticatedChallengeSurvivesTheRoutePermissionCallback(): void
@@ -700,7 +835,7 @@ final class MiddlewareTest extends TestCase
         self::assertSame('rest_oauth_required', $response->data['code']);
         // RFC 6750 §3.1: a request that carried no credentials gets no `error` parameter.
         self::assertSame(
-            'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource", scope="mcp"',
+            'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource", scope="full_access"',
             $response->headers['WWW-Authenticate'],
         );
     }
@@ -712,6 +847,7 @@ final class MiddlewareTest extends TestCase
             false,
             $_SERVER['HTTP_AUTHORIZATION'],
             static fn(): array => ['user_id' => 73, 'scopes' => ['mcp']],
+            is_rest_request: true,
         );
 
         $response = $this->dispatchAgainstDenyingPermissionCallback(new WP_REST_Request('POST', '/mcp/novamira-oauth'));
@@ -720,7 +856,7 @@ final class MiddlewareTest extends TestCase
         self::assertSame(401, $response->status);
         self::assertSame('rest_oauth_required', $response->data['code']);
         self::assertSame(
-            'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource", scope="mcp"',
+            'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource", scope="full_access"',
             $response->headers['WWW-Authenticate'],
         );
     }
@@ -736,7 +872,7 @@ final class MiddlewareTest extends TestCase
         self::assertSame(401, $response->status);
         self::assertSame('rest_oauth_required', $response->data['code']);
         self::assertSame(
-            'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource", scope="mcp"',
+            'Bearer resource_metadata="https://example.test/.well-known/oauth-protected-resource", scope="full_access"',
             $response->headers['WWW-Authenticate'],
         );
     }
@@ -744,9 +880,11 @@ final class MiddlewareTest extends TestCase
     public function testRoutedScopeDenialsCarryTheirChallengeOnTheResponseObject(): void
     {
         $this->authenticateOauthUser(['mcp']);
+        $GLOBALS['novamira_test_current_user_can_manage'] = false;
         $forbidden = $this->dispatchAgainstDenyingPermissionCallback(
             new WP_REST_Request('GET', '/wp/v2/posts'),
         );
+        $GLOBALS['novamira_test_current_user_can_manage'] = true;
         self::assertInstanceOf(WP_REST_Response::class, $forbidden);
         self::assertSame(403, $forbidden->status);
         self::assertStringContainsString('error="insufficient_scope"', $forbidden->headers['WWW-Authenticate']);
@@ -758,7 +896,7 @@ final class MiddlewareTest extends TestCase
         self::assertInstanceOf(WP_REST_Response::class, $insufficient);
         self::assertSame('rest_oauth_error', $insufficient->data['code']);
         self::assertStringContainsString('error="insufficient_scope"', $insufficient->headers['WWW-Authenticate']);
-        self::assertStringContainsString('scope="mcp"', $insufficient->headers['WWW-Authenticate']);
+        self::assertStringContainsString('scope="full_access"', $insufficient->headers['WWW-Authenticate']);
     }
 
     public function testChallengeAttachmentLeavesUnrelatedResultsUntouched(): void
@@ -810,7 +948,7 @@ final class MiddlewareTest extends TestCase
         $challenge = \Novamira\OAuth\Middleware\www_authenticate_header('invalid_token');
         self::assertStringContainsString('resource_metadata=', $challenge);
         self::assertStringContainsString('error="invalid_token"', $challenge);
-        self::assertStringContainsString('scope="mcp"', $challenge);
+        self::assertStringContainsString('scope="full_access"', $challenge);
     }
 
     /**
@@ -835,6 +973,7 @@ final class MiddlewareTest extends TestCase
             false,
             'Bearer ' . $this->jwtForAudience(\Novamira\OAuth\resource_identifier()),
             static fn(): array => ['user_id' => 73, 'scopes' => $scopes],
+            is_rest_request: true,
         );
     }
 

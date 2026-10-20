@@ -162,6 +162,7 @@ final class BearerAuthenticationTest extends TestCase
                 $authorization,
                 $this->resourceServer(revoked: false),
             ),
+            is_rest_request: true,
         );
 
         self::assertSame(73, $resolved);
@@ -187,6 +188,7 @@ final class BearerAuthenticationTest extends TestCase
                 $authorization,
                 $this->resourceServer(revoked: false),
             ),
+            is_rest_request: true,
         );
 
         self::assertFalse($resolved);

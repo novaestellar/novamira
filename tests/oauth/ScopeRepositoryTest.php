@@ -34,8 +34,8 @@ final class ScopeRepositoryTest extends TestCase
     public function testAcceptsAbilityMcpAndCompatibilityAliasScopesOnly(): void
     {
         $repo = new ScopeRepository();
-        foreach (['abilities:read', 'abilities', 'mcp', 'read', 'write'] as $scope) {
-            self::assertNotNull($repo->getScopeEntityByIdentifier($scope));
+        foreach (['full_access', 'abilities:read', 'abilities', 'mcp', 'read', 'write'] as $scope) {
+            self::assertSame('full_access', $repo->getScopeEntityByIdentifier($scope)?->getIdentifier());
         }
         self::assertNull($repo->getScopeEntityByIdentifier('admin'));
         self::assertNull($repo->getScopeEntityByIdentifier(''));
@@ -57,14 +57,15 @@ final class ScopeRepositoryTest extends TestCase
     /** @return iterable<string, array{list<string>, list<string>}> */
     public static function finalizedScopeProvider(): iterable
     {
-        yield 'old readonly alias' => [['abilities:read'], ['mcp']];
-        yield 'old full alias' => [['abilities'], ['mcp']];
-        yield 'old ability combination' => [['abilities:read', 'abilities'], ['mcp']];
-        yield 'mcp' => [['mcp'], ['mcp']];
-        yield 'legacy read alias' => [['read'], ['mcp']];
-        yield 'legacy write aliases' => [['read', 'write'], ['mcp']];
-        yield 'empty legacy default' => [[], ['mcp']];
-        yield 'mixed recognized aliases' => [['mcp', 'abilities:read'], ['mcp']];
+        yield 'old readonly alias' => [['abilities:read'], ['full_access']];
+        yield 'old full alias' => [['abilities'], ['full_access']];
+        yield 'old ability combination' => [['abilities:read', 'abilities'], ['full_access']];
+        yield 'mcp' => [['mcp'], ['full_access']];
+        yield 'canonical' => [['full_access'], ['full_access']];
+        yield 'legacy read alias' => [['read'], ['full_access']];
+        yield 'legacy write aliases' => [['read', 'write'], ['full_access']];
+        yield 'empty legacy default' => [[], ['full_access']];
+        yield 'mixed recognized aliases' => [['mcp', 'abilities:read'], ['full_access']];
     }
 
     private function scope(string $id): ScopeEntity

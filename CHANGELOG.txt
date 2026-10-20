@@ -1,4 +1,6 @@
 Unreleased
+* Tweak: OAuth connections for MCP now cover the site's entire REST API, using the full access already approved by the administrator. Existing connections keep working without needing to reconnect.
+* Fix: Elementor pages edited through Novamira Pro over OAuth now retain global colors and fonts when their styles are regenerated.
 * Fix: The Block Editor Queue now reports stopped changes and recovers abandoned batches, instead of staying stuck silently after an error.
 * Fix: Ready Block Editor Queue batches are no longer held up by a newer batch that keeps failing.
 * Fix: A Block Editor Queue page left open in a background tab is no longer reported as closed when the browser slows its heartbeat.

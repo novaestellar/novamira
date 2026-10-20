@@ -123,7 +123,7 @@ final class DeviceCodeGrantTest extends TestCase
         self::assertNotSame('', (string) $body['refresh_token']);
         // The device grant must converge on the same full-access token as the browser flow, minted
         // for the WordPress user who approved it.
-        self::assertSame(['mcp'], $this->jwtClaim((string) $body['access_token'], 'scopes'));
+        self::assertSame(['full_access'], $this->jwtClaim((string) $body['access_token'], 'scopes'));
         self::assertSame('73', $this->jwtClaim((string) $body['access_token'], 'sub'));
 
         // Replaying the same device code must not mint a second grant. The replay is dated past the

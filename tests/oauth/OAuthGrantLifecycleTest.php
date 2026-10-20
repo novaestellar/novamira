@@ -32,15 +32,17 @@ use League\OAuth2\Server\Entities\AuthCodeEntityInterface;
 use League\OAuth2\Server\Entities\ClientEntityInterface;
 use League\OAuth2\Server\Entities\RefreshTokenEntityInterface;
 use League\OAuth2\Server\Grant\AuthCodeGrant;
-use League\OAuth2\Server\Grant\RefreshTokenGrant;
 use League\OAuth2\Server\Repositories\AccessTokenRepositoryInterface;
 use League\OAuth2\Server\Repositories\AuthCodeRepositoryInterface;
 use League\OAuth2\Server\Repositories\ClientRepositoryInterface;
 use League\OAuth2\Server\Repositories\RefreshTokenRepositoryInterface;
+use League\OAuth2\Server\Repositories\ScopeRepositoryInterface;
+use Novamira\OAuth\Grants\RefreshTokenGrant;
 use Novamira\OAuth\Repositories\AccessTokenEntity;
 use Novamira\OAuth\Repositories\AuthCodeEntity;
 use Novamira\OAuth\Repositories\ClientEntity;
 use Novamira\OAuth\Repositories\RefreshTokenEntity;
+use Novamira\OAuth\Repositories\ScopeEntity;
 use Novamira\OAuth\Repositories\ScopeRepository;
 use Novamira\OAuth\Repositories\UserEntity;
 use Nyholm\Psr7\Factory\Psr17Factory;
@@ -55,6 +57,7 @@ require_once __DIR__ . '/../../includes/oauth/repositories/auth-code-repository.
 require_once __DIR__ . '/../../includes/oauth/repositories/refresh-token-repository.php';
 require_once __DIR__ . '/../../includes/oauth/repositories/scope-repository.php';
 require_once __DIR__ . '/../../includes/oauth/repositories/user-repository.php';
+require_once __DIR__ . '/../../includes/oauth/grants/refresh-token-grant.php';
 
 final class OAuthGrantLifecycleTest extends TestCase
 {
@@ -64,9 +67,13 @@ final class OAuthGrantLifecycleTest extends TestCase
         $harness = $this->serverHarness();
         $tokens = $this->authorizeAndExchange($harness['server'], $scope);
 
-        self::assertSame(['mcp'], $this->jwtScopes($tokens['access_token']));
+        self::assertSame(['full_access'], $this->jwtScopes($tokens['access_token']));
         $refreshed = $this->refresh($harness['server'], $tokens['refresh_token']);
-        self::assertSame(['mcp'], $this->jwtScopes($refreshed['access_token']));
+        self::assertSame(['full_access'], $this->jwtScopes($refreshed['access_token']));
+        foreach (['full_access', 'mcp', 'abilities'] as $requested) {
+            $refreshed = $this->refresh($harness['server'], $refreshed['refresh_token'], $requested);
+            self::assertSame(['full_access'], $this->jwtScopes($refreshed['access_token']));
+        }
     }
 
     /** @return iterable<string, array{string}> */
@@ -74,7 +81,44 @@ final class OAuthGrantLifecycleTest extends TestCase
     {
         yield 'old readonly alias' => ['abilities:read'];
         yield 'old full alias' => ['abilities'];
-        yield 'full access' => ['mcp'];
+        yield 'mcp' => ['mcp'];
+        yield 'full access' => ['full_access'];
+        yield 'none requested' => [''];
+    }
+
+    /**
+     * A refresh token issued while `mcp` was the issued scope must keep refreshing, whether the
+     * client sends no scope, the scope it was granted, or the one discovery now advertises.
+     */
+    #[DataProvider('refreshScopeProvider')]
+    public function testRefreshTokenIssuedAsMcpKeepsRefreshing(?string $requested): void
+    {
+        $harness = $this->serverHarness();
+        $tokens = $this->authorizeAndExchange($harness['legacy_server'], 'mcp');
+        self::assertSame(['mcp'], $this->jwtScopes($tokens['access_token']));
+
+        $refreshed = $this->refresh($harness['server'], $tokens['refresh_token'], $requested);
+
+        self::assertSame(['full_access'], $this->jwtScopes($refreshed['access_token']));
+    }
+
+    /** @return iterable<string, array{string|null}> */
+    public static function refreshScopeProvider(): iterable
+    {
+        yield 'no scope' => [null];
+        yield 'granted scope' => ['mcp'];
+        yield 'advertised scope' => ['full_access'];
+        yield 'both' => ['full_access mcp'];
+    }
+
+    public function testRefreshTokenWithoutARecognizedScopeIsRefused(): void
+    {
+        $data = \Novamira\OAuth\Grants\canonicalize_refresh_token_scopes(['scopes' => ['admin'], 'user_id' => '73']);
+        self::assertSame(['scopes' => [], 'user_id' => '73'], $data);
+        self::assertSame(
+            ['full_access'],
+            \Novamira\OAuth\Grants\canonicalize_refresh_token_scopes(['scopes' => ['abilities:read', 'mcp']])['scopes'],
+        );
     }
 
     /**
@@ -82,7 +126,8 @@ final class OAuthGrantLifecycleTest extends TestCase
      *     server: AuthorizationServer,
      *     access: AccessTokenRepositoryInterface,
      *     refresh: RefreshTokenRepositoryInterface,
-     *     auth_code: AuthCodeRepositoryInterface
+     *     auth_code: AuthCodeRepositoryInterface,
+     *     legacy_server: AuthorizationServer
      * }
      */
     private function serverHarness(): array
@@ -200,15 +245,50 @@ final class OAuthGrantLifecycleTest extends TestCase
         $privateKey = new CryptKey($privatePem, passPhrase: null, keyPermissionsCheck: false);
         $encryptionKey = base64_encode(random_bytes(32));
 
-        $server = new AuthorizationServer($clients, $access, new ScopeRepository(), $privateKey, $encryptionKey);
-        $authCodeGrant = new AuthCodeGrant($authCodes, $refresh, new DateInterval('PT2M'));
-        $authCodeGrant->setRefreshTokenTTL(new DateInterval('PT1H'));
-        $server->enableGrantType($authCodeGrant, new DateInterval('PT1H'));
-        $refreshGrant = new RefreshTokenGrant($refresh);
-        $refreshGrant->setRefreshTokenTTL(new DateInterval('PT1H'));
-        $server->enableGrantType($refreshGrant, new DateInterval('PT1H'));
+        $build = static function (ScopeRepositoryInterface $scopes) use (
+            $clients,
+            $access,
+            $authCodes,
+            $refresh,
+            $privateKey,
+            $encryptionKey,
+        ): AuthorizationServer {
+            $server = new AuthorizationServer($clients, $access, $scopes, $privateKey, $encryptionKey);
+            $authCodeGrant = new AuthCodeGrant($authCodes, $refresh, new DateInterval('PT2M'));
+            $authCodeGrant->setRefreshTokenTTL(new DateInterval('PT1H'));
+            $server->enableGrantType($authCodeGrant, new DateInterval('PT1H'));
+            $refreshGrant = new RefreshTokenGrant($refresh);
+            $refreshGrant->setRefreshTokenTTL(new DateInterval('PT1H'));
+            $server->enableGrantType($refreshGrant, new DateInterval('PT1H'));
+            return $server;
+        };
 
-        return ['server' => $server, 'access' => $access, 'refresh' => $refresh, 'auth_code' => $authCodes];
+        // The scope repository of earlier releases: literal identifiers, every grant issued as `mcp`.
+        $legacyScopes = new class implements ScopeRepositoryInterface {
+            public function getScopeEntityByIdentifier(mixed $identifier): ?ScopeEntity
+            {
+                $entity = new ScopeEntity();
+                $entity->setIdentifier((string) $identifier);
+                return $entity;
+            }
+
+            public function finalizeScopes(
+                array $scopes,
+                mixed $grantType,
+                ClientEntityInterface $clientEntity,
+                mixed $userIdentifier = null,
+            ): array {
+                return [$this->getScopeEntityByIdentifier('mcp')];
+            }
+        };
+
+        return [
+            'server' => $build(new ScopeRepository()),
+            'access' => $access,
+            'refresh' => $refresh,
+            'auth_code' => $authCodes,
+            'legacy_server' => $build($legacyScopes),
+        ];
     }
 
     /** @return array{access_token: string, refresh_token: string} */

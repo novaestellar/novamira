@@ -76,27 +76,43 @@ function resource_request_allowed(string $requested, string $expected): bool
 }
 
 /**
- * Scopes accepted by the authorization and token servers. `mcp` is the only scope issued.
- * The other values remain accepted as migration aliases for clients authenticated before
- * Novamira switched to one full-access grant.
+ * The one scope Novamira issues: full access to this site's REST API, with the consenting user's
+ * capabilities, the same reach as an Application Password.
+ */
+const FULL_ACCESS_SCOPE = 'full_access';
+
+/**
+ * Scopes accepted by the authorization and token servers, all synonyms of `full_access`. `mcp` is
+ * what earlier releases issued and advertised, so existing tokens and clients keep working; the
+ * others are older aliases from before Novamira switched to one full-access grant.
  *
  * @return list<string>
  */
 function supported_scopes(): array
 {
-    return ['mcp', 'read', 'write', 'abilities:read', 'abilities'];
+    return [FULL_ACCESS_SCOPE, 'mcp', 'read', 'write', 'abilities:read', 'abilities'];
+}
+
+/**
+ * Whether a set of granted or requested scopes names the full-access grant under any synonym.
+ *
+ * @param list<string> $scopes
+ */
+function grants_full_access(array $scopes): bool
+{
+    return array_intersect($scopes, supported_scopes()) !== [];
 }
 
 /**
  * Validate and normalize the scope string captured before consent.
  *
- * Every recognized request maps to the one full-access `mcp` grant.
+ * Every recognized request maps to the one `full_access` grant.
  */
 function normalize_authorization_scope(string $requested): ?string
 {
     $requested = trim($requested);
     if ($requested === '') {
-        return 'mcp';
+        return FULL_ACCESS_SCOPE;
     }
     $parts = preg_split('/\s+/', $requested);
     if ($parts === false || $parts === []) {
@@ -109,7 +125,7 @@ function normalize_authorization_scope(string $requested): ?string
         }
     }
 
-    return 'mcp';
+    return FULL_ACCESS_SCOPE;
 }
 
 function boot(): void
@@ -151,6 +167,7 @@ function boot(): void
     // that reads the polling interval, not with the other REST routes below.
     require_once __DIR__ . '/endpoints/device.php';
     require_once __DIR__ . '/grants/device-code-grant.php';
+    require_once __DIR__ . '/grants/refresh-token-grant.php';
     require_once __DIR__ . '/server-factory.php';
     require_once __DIR__ . '/bridge.php';
 

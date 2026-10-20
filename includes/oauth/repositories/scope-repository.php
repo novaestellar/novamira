@@ -28,13 +28,12 @@ final class ScopeRepository implements ScopeRepositoryInterface
 {
     public function getScopeEntityByIdentifier(mixed $identifier): ?ScopeEntityInterface
     {
-        $identifier = (string) $identifier;
-        if (!in_array($identifier, \Novamira\OAuth\supported_scopes(), strict: true)) {
+        // Every synonym resolves to the canonical grant, so a request for `mcp` (what earlier releases
+        // advertised) and a request for `full_access` produce the same token.
+        if (!in_array((string) $identifier, \Novamira\OAuth\supported_scopes(), strict: true)) {
             return null;
         }
-        $entity = new ScopeEntity();
-        $entity->setIdentifier($identifier);
-        return $entity;
+        return self::full_access();
     }
 
     /** @param array<array-key, ScopeEntityInterface> $scopes */
@@ -45,8 +44,13 @@ final class ScopeRepository implements ScopeRepositoryInterface
         mixed $userIdentifier = null,
     ): array {
         // Every accepted authorization and refresh flow converges on the single full-access grant.
-        $mcp = new ScopeEntity();
-        $mcp->setIdentifier('mcp');
-        return [$mcp];
+        return [self::full_access()];
+    }
+
+    public static function full_access(): ScopeEntity
+    {
+        $entity = new ScopeEntity();
+        $entity->setIdentifier(\Novamira\OAuth\FULL_ACCESS_SCOPE);
+        return $entity;
     }
 }

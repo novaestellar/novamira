@@ -170,6 +170,20 @@ function discovery_probes(string $home_url, string $resource): array
 }
 
 /**
+ * The scopes both metadata documents advertise: only the canonical grant.
+ *
+ * MCP clients request what is advertised (the WWW-Authenticate scope first, then every entry of
+ * scopes_supported), so listing a synonym as well would only lengthen the requested scope and the
+ * consent screen. Every synonym, `mcp` included, is still accepted wherever a scope is read.
+ *
+ * @return list<string>
+ */
+function advertised_scopes(): array
+{
+    return [\Novamira\OAuth\FULL_ACCESS_SCOPE];
+}
+
+/**
  * @return array<string, mixed>
  */
 function protected_resource_document(): array
@@ -178,7 +192,7 @@ function protected_resource_document(): array
         'resource' => \Novamira\OAuth\resource_identifier(),
         'authorization_servers' => [home_url()],
         'bearer_methods_supported' => ['header'],
-        'scopes_supported' => ['mcp'],
+        'scopes_supported' => advertised_scopes(),
         'novamira' => \novamira_server_compatibility(),
     ];
 }
@@ -205,7 +219,7 @@ function authorization_server_document(): array
         'grant_types_supported' => ['authorization_code', 'refresh_token', \Novamira\OAuth\DEVICE_CODE_GRANT_TYPE],
         'code_challenge_methods_supported' => ['S256'],
         'token_endpoint_auth_methods_supported' => ['none'],
-        'scopes_supported' => ['mcp'],
+        'scopes_supported' => advertised_scopes(),
     ];
 }
 

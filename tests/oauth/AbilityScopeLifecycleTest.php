@@ -45,23 +45,27 @@ final class AbilityScopeLifecycleTest extends TestCase
     /** @return iterable<string, array{string, string|null}> */
     public static function authorizationScopeProvider(): iterable
     {
-        yield 'default legacy' => ['', 'mcp'];
-        yield 'old readonly alias' => ['abilities:read', 'mcp'];
-        yield 'old full alias' => ['abilities', 'mcp'];
-        yield 'old ability combination' => ['abilities abilities:read', 'mcp'];
-        yield 'mcp' => ['mcp', 'mcp'];
-        yield 'legacy aliases' => ['read write', 'mcp'];
+        yield 'default legacy' => ['', 'full_access'];
+        yield 'old readonly alias' => ['abilities:read', 'full_access'];
+        yield 'old full alias' => ['abilities', 'full_access'];
+        yield 'old ability combination' => ['abilities abilities:read', 'full_access'];
+        yield 'mcp' => ['mcp', 'full_access'];
+        yield 'canonical' => ['full_access', 'full_access'];
+        yield 'canonical with synonym' => ['full_access mcp', 'full_access'];
+        yield 'legacy aliases' => ['read write', 'full_access'];
         yield 'unknown' => ['admin', null];
-        yield 'mixed recognized aliases' => ['mcp abilities read', 'mcp'];
+        yield 'mixed recognized aliases' => ['mcp abilities read', 'full_access'];
     }
 
     public function testConsentAlwaysDescribesFullAccess(): void
     {
-        foreach (['mcp', 'abilities', 'abilities:read'] as $scope) {
+        foreach (['full_access', 'mcp', 'abilities', 'abilities:read'] as $scope) {
             $grant = \Novamira\OAuth\Consent\consent_grant_details($scope);
             self::assertStringContainsString('full', strtolower($grant['label']));
             self::assertCount(5, $grant['risks']);
             self::assertStringContainsString('third-party', $grant['description']);
+            self::assertStringContainsString('REST API', $grant['label']);
+            self::assertStringContainsString('application password', $grant['description']);
             self::assertStringContainsString('temporary administrator', implode(' ', $grant['risks']));
         }
     }
@@ -78,7 +82,8 @@ final class AbilityScopeLifecycleTest extends TestCase
     /** @return iterable<string, array{mixed, string}> */
     public static function grantedScopeProvider(): iterable
     {
-        yield 'full access' => [['mcp'], 'mcp'];
+        yield 'full access' => [['full_access'], 'full_access'];
+        yield 'token issued as mcp' => [['mcp'], 'mcp'];
         yield 'legacy ability token' => [['abilities'], 'abilities'];
         yield 'legacy readonly token' => ['abilities:read', 'abilities:read'];
         yield 'invalid input' => [null, ''];

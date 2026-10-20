@@ -26,7 +26,7 @@ function register(): void
     add_filter('rest_authentication_errors', __NAMESPACE__ . '\\reject_invalid_bearer', priority: 5);
 
     // This hook runs only after WP_REST_Server matches a registered route and before its permission
-    // callback, so both OAuth authorization and missing-credential challenges use authoritative routing.
+    // callback, so both the OAuth checks and missing-credential challenges use authoritative routing.
     add_filter(
         'rest_request_before_callbacks',
         __NAMESPACE__ . '\\authorize_routed_request',
@@ -47,6 +47,15 @@ function register(): void
 /**
  * Establish a WordPress identity without making any route authorization decision.
  *
+ * A Novamira token is a REST API credential, like an Application Password, and is honoured only
+ * while WordPress serves a REST request. Everywhere else (admin-ajax.php, admin-post.php, the front
+ * end, wp-comments-post.php, wp-cron.php, wp-login.php) the request stays anonymous.
+ *
+ * A plugin that resolves the current user before REST_REQUEST is defined (at init, for example)
+ * caches an anonymous user. WP_REST_Server::serve_request() clears a cached anonymous user, so this
+ * filter runs again once the request is known to be a REST request; core relies on the same step
+ * for Application Passwords.
+ *
  * @param mixed $user Existing identity established by WordPress.
  * @return mixed The existing identity, or the OAuth subject ID after successful validation.
  */
@@ -58,21 +67,38 @@ function resolve_bearer_identity(mixed $user): mixed
         $user,
         $auth,
         static fn(string $authorization): array => validate_bearer_credential($authorization),
+        is_rest_request(),
     );
 }
 
 /**
+ * Whether WordPress is serving a REST request, the check core applies to Application Passwords.
+ * rest_api_loaded() defines REST_REQUEST before WP_REST_Server::serve_request() runs.
+ */
+function is_rest_request(): bool
+{
+    // Truthy, as core reads it.
+    // @mago-expect analysis:mixed-operand
+    return defined('REST_REQUEST') && (bool) constant('REST_REQUEST');
+}
+
+/**
  * Testable identity-resolution core. The production entry point always supplies the cryptographic
- * League OAuth resource-server validator above; route or query values are deliberately unavailable.
+ * League OAuth resource-server validator above and whether WordPress is serving a REST request;
+ * route or query values are deliberately unavailable.
  *
  * @param \Closure(string): array{user_id: int, scopes: list<string>} $validator
  * @return mixed
  */
-function resolve_bearer_identity_using(mixed $user, string $auth, \Closure $validator): mixed
+// @mago-expect lint:no-boolean-flag-parameter -- the request context is passed in so tests can supply it.
+function resolve_bearer_identity_using(mixed $user, string $auth, \Closure $validator, bool $is_rest_request): mixed
 {
     reset_request_context();
 
     if (has_existing_identity($user)) {
+        return $user;
+    }
+    if (!$is_rest_request) {
         return $user;
     }
     if (!has_bearer_scheme($auth)) {
@@ -142,6 +168,12 @@ function validate_bearer_credential(string $auth, ?ResourceServer $server = null
  */
 function reject_invalid_bearer(mixed $result): mixed
 {
+    // The Bearer credential is read only once REST_REQUEST is defined, and serve_request() has just
+    // cleared any anonymous user resolved before that. Nothing may have resolved the user since, so
+    // resolve it here: otherwise a rejected token would only be recorded by a later callback and the
+    // client would get a generic not-logged-in error without the invalid_token challenge.
+    get_current_user_id();
+
     $error = request_authentication_error();
     if ($error === null) {
         return $result;
@@ -153,27 +185,29 @@ function reject_invalid_bearer(mixed $result): mixed
 }
 
 /**
- * Enforce OAuth's route boundary from the authoritative matched request route and method.
+ * Apply the OAuth grant checks to every REST request, top-level, batch, or internal, served under an
+ * OAuth identity.
+ *
+ * A Novamira token reaches the whole REST API, like an Application Password: each route's own
+ * permission callback then judges the consenting user's capabilities. Novamira adds only that the
+ * token carries the full-access grant and that the user may still manage Novamira.
  */
 function authorize_routed_request(mixed $result, mixed $handler, WP_REST_Request $request): mixed
 {
-    $route = $request->get_route();
-    $method = strtoupper($request->get_method());
     $identity = request_oauth_identity();
 
     if ($identity === null) {
         return challenge_unauthenticated($result, $handler, $request);
     }
 
-    if (!oauth_identity_may_use_route($route, $method)) {
-        return new WP_Error(
-            'rest_oauth_route_forbidden',
-            'This OAuth credential is not accepted on the requested REST route.',
-            ['status' => 403],
-        );
+    // Code that switched to another user for an internal request is no longer acting on the token;
+    // that user's own capabilities and the route's permission callback decide, as they would for
+    // an Application Password request.
+    if (get_current_user_id() !== $identity['user_id']) {
+        return $result;
     }
 
-    if (!scopes_authorize_routed_request($identity['scopes'], $route, $method)) {
+    if (!\Novamira\OAuth\grants_full_access($identity['scopes'])) {
         return new WP_Error('rest_oauth_error', 'Token does not grant access to this REST route.', ['status' => 403]);
     }
 
@@ -183,7 +217,7 @@ function authorize_routed_request(mixed $result, mixed $handler, WP_REST_Request
         ]);
     }
 
-    // Preserve an earlier pre-dispatch response only after proving that OAuth may be used here.
+    // Preserve an earlier pre-dispatch response only after proving that the grant is still valid.
     return $result;
 }
 
@@ -200,7 +234,7 @@ function challenge_unauthenticated(mixed $result, mixed $handler, WP_REST_Reques
         return $result;
     }
 
-    if (route_required_scope($request->get_route(), strtoupper($request->get_method())) === null) {
+    if (!is_oauth_challenge_route($request->get_route(), strtoupper($request->get_method()))) {
         return $result;
     }
 
@@ -239,20 +273,17 @@ function attach_www_authenticate_challenge(mixed $response, mixed $handler, WP_R
 function routed_challenge(WP_Error $error, WP_REST_Request $request): ?string
 {
     $code = $error->get_error_code();
-    $required_scope = route_required_scope($request->get_route(), strtoupper($request->get_method()));
 
     if ($code === 'rest_oauth_required') {
         // RFC 6750 §3.1: no `error` parameter when the request carried no credentials at all.
-        return $required_scope === null ? null : www_authenticate_header(scope: $required_scope);
-    }
-    if ($code === 'rest_oauth_route_forbidden') {
-        // The route lies outside OAuth's boundary, so it has no route-specific scope to name.
-        return www_authenticate_header('insufficient_scope');
+        return is_oauth_challenge_route($request->get_route(), strtoupper($request->get_method()))
+            ? www_authenticate_header()
+            : null;
     }
     // rest_oauth_error also carries pre-dispatch authentication failures, which never reach this
-    // filter; the 403 status is what identifies the routed scope denials among them.
+    // filter; the 403 status is what identifies the routed grant denials among them.
     if ($code === 'rest_oauth_error' && error_status($error) === 403) {
-        return www_authenticate_header('insufficient_scope', $required_scope ?? 'mcp');
+        return www_authenticate_header('insufficient_scope');
     }
 
     return null;
@@ -269,9 +300,9 @@ function error_status(WP_Error $error): ?int
 }
 
 /**
- * RFC 6750 WWW-Authenticate challenge value.
+ * RFC 6750 WWW-Authenticate challenge value. The scope named is the one discovery advertises.
  */
-function www_authenticate_header(?string $error = null, string $scope = 'mcp'): string
+function www_authenticate_header(?string $error = null, string $scope = \Novamira\OAuth\FULL_ACCESS_SCOPE): string
 {
     $value = 'Bearer resource_metadata="' . \Novamira\OAuth\Endpoints\Discovery\protected_resource_metadata_url() . '"';
     if ($error !== null) {
@@ -302,9 +333,11 @@ function is_mcp_route(string $route): bool
 }
 
 /**
- * Exact REST routes on which a Novamira-established identity may survive post-routing checks.
+ * Exact REST routes that answer a credential-less request with the OAuth challenge, so an MCP or
+ * ability client can discover how to authenticate. Every other route keeps its anonymous behaviour;
+ * a valid token is accepted on all of them.
  */
-function oauth_identity_may_use_route(string $route, string $method): bool
+function is_oauth_challenge_route(string $route, string $method): bool
 {
     $method = strtoupper($method);
     if (is_mcp_route($route)) {
@@ -318,19 +351,6 @@ function oauth_identity_may_use_route(string $route, string $method): bool
     }
 
     return $method === 'POST' && preg_match('#^/novamira/v1/abilities/[^/]+(?:/[^/]+)+/run$#', $route) === 1;
-}
-
-/** @param list<string> $scopes */
-function scopes_authorize_routed_request(array $scopes, string $route, string $method): bool
-{
-    // `abilities` and `abilities:read` are accepted only for already-issued CLI tokens. There is
-    // no longer a read-only mode: every recognized grant has the same full access as `mcp`.
-    return array_intersect($scopes, ['mcp', 'abilities', 'abilities:read']) !== [];
-}
-
-function route_required_scope(string $route, string $method): ?string
-{
-    return oauth_identity_may_use_route($route, $method) ? 'mcp' : null;
 }
 
 function get_authorization_header(): string
