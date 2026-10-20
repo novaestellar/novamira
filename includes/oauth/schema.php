@@ -317,7 +317,8 @@ function tables_installed(string $prefix): bool
     $db = $wpdb;
     foreach (required_tables($prefix) as $table) {
         $sql = $db->prepare('SHOW TABLES LIKE %s', $db->esc_like($table));
-        if (!is_string($sql) || $db->get_var($sql) !== $table) {
+        // MySQL with lower_case_table_names=1 (the Windows default) reports the name lowercased.
+        if (!is_string($sql) || strcasecmp((string) $db->get_var($sql), $table) !== 0) {
             return false;
         }
     }

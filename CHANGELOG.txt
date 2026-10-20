@@ -1,3 +1,6 @@
+Unreleased
+* Fix: Sites on Windows servers whose table prefix contains capital letters no longer report the connection storage as missing.
+
 v1.12.10 - 2026/10/20
 * Tweak: OAuth connections for MCP now cover the site's entire REST API, using the full access already approved by the administrator. Existing connections keep working without needing to reconnect.
 * Tweak: AI agents editing a Gutenberg page can now detect that it was edited by hand after they read it, and stop instead of overwriting those edits.

@@ -438,7 +438,8 @@ function novamira_uninstall_chat_session_count(): int
     /** @var wpdb $wpdb */
     $table = $wpdb->prefix . 'novamira_chat_sessions';
     $table_query = $wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($table));
-    if (!is_string($table_query) || $wpdb->get_var($table_query) !== $table) {
+    // MySQL with lower_case_table_names=1 (the Windows default) reports the name lowercased.
+    if (!is_string($table_query) || strcasecmp((string) $wpdb->get_var($table_query), $table) !== 0) {
         return 0;
     }
 
