@@ -1,3 +1,4 @@
+v1.12.11 - 2026/10/21
 * New: PHP compatibility check skill. AI agents can check whether the site's plugins, theme and custom code are ready for a newer PHP version, and propose an update or a code change for each problem.
 * Tweak: Skills can now be made available in Novamira Pro's Read Mode, from the skill's page or in the skill file, so AI agents can use skills that only read the site while Read Mode is on.
 * Fix: Sites on Windows servers whose table prefix contains capital letters no longer report the connection storage as missing.
