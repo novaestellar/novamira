@@ -50,11 +50,11 @@ function register(array $sources): array
  * from several spots (catalog inject, prompts register, admin list) and
  * re-parsing on every call would be wasteful.
  *
- * @return list<array{slug: string, name: string, description: string, content: string, enable_prompt: bool, enable_agentic: bool}>
+ * @return list<array{slug: string, name: string, description: string, content: string, enable_prompt: bool, enable_agentic: bool, read_mode: bool}>
  */
 function load(): array
 {
-    /** @var list<array{slug: string, name: string, description: string, content: string, enable_prompt: bool, enable_agentic: bool}>|null $cached */
+    /** @var list<array{slug: string, name: string, description: string, content: string, enable_prompt: bool, enable_agentic: bool, read_mode: bool}>|null $cached */
     static $cached = null;
     if (is_array($cached)) {
         return $cached;
@@ -89,6 +89,7 @@ function load(): array
                 'content' => $parsed['body'],
                 'enable_prompt' => $parsed['enable_prompt'],
                 'enable_agentic' => $parsed['enable_agentic'],
+                'read_mode' => $parsed['read_mode'],
             ];
         }
     }

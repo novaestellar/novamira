@@ -11,9 +11,11 @@ if (!defined('ABSPATH')) {
 
 wp_register_ability('novamira/agent-context', [
     'label' => __('Agent Context', domain: 'novamira'),
-    // Read mode offers no skills, so its description does not mention them.
     'description' => function_exists('novamira_is_read_mode') && novamira_is_read_mode()
-        ? __('Return transport-neutral Novamira read-mode guidance and environment.', domain: 'novamira')
+        ? __(
+            'Return transport-neutral Novamira read-mode guidance, environment, and read-mode skill summaries.',
+            domain: 'novamira',
+        )
         : __('Return transport-neutral Novamira site guidance, environment, and skill summaries.', domain: 'novamira'),
     'category' => 'context',
     'output_schema' => [
@@ -61,10 +63,10 @@ function novamira_build_agent_context(): array
         ? novamira_agent_instructions()
         : (string) apply_filters('novamira_discover_abilities_instructions', novamira_build_server_instructions());
 
-    // Read mode offers no skills, so their sources and loaders are not consulted at all.
+    // In read mode only the skills that declare read_mode are discoverable.
     $read_mode = function_exists('novamira_is_read_mode') && novamira_is_read_mode();
     $skills = [];
-    foreach ($read_mode ? [] : \Novamira\Skills\Sources\discoverable('agentic') as $skill) {
+    foreach (\Novamira\Skills\Sources\discoverable('agentic') as $skill) {
         $skills[] = [
             'slug' => (string) ($skill['slug'] ?? ''),
             'description' => (string) ($skill['description'] ?? ''),

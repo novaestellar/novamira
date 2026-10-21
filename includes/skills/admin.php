@@ -273,6 +273,7 @@ function handle_update(): void
     ]);
     update_post_meta($post_id, Cpt\META_ENABLE_PROMPT, $input['enable_prompt']);
     update_post_meta($post_id, Cpt\META_ENABLE_AGENTIC, $input['enable_agentic']);
+    update_post_meta($post_id, Cpt\META_READ_MODE, $input['read_mode']);
 
     Notices\set_pending_reload_notice();
     wp_safe_redirect(add_query_arg([
@@ -439,6 +440,7 @@ function process_one_upload(array $file, string $on_conflict): string|\WP_Error
         'content' => $parsed['body'],
         'enable_prompt' => $parsed['enable_prompt'],
         'enable_agentic' => $parsed['enable_agentic'],
+        'read_mode' => $parsed['read_mode'],
         'on_conflict' => $on_conflict,
     ]);
     if (is_wp_error($result)) {
@@ -525,6 +527,7 @@ function handle_download(): void
         'description' => $post->post_excerpt,
         'enable_prompt' => $enable_prompt,
         'enable_agentic' => $enable_agentic,
+        'read_mode' => boolval(get_post_meta($post_id, Cpt\META_READ_MODE, single: true)),
         'content' => $post->post_content,
     ]);
 
@@ -583,6 +586,7 @@ function handle_download_all(): void
             'description' => $post->post_excerpt,
             'enable_prompt' => $enable_prompt,
             'enable_agentic' => $enable_agentic,
+            'read_mode' => boolval(get_post_meta($post->ID, Cpt\META_READ_MODE, single: true)),
             'content' => $post->post_content,
         ]);
         $zip->addFromString($slug . '.md', $md);
@@ -631,7 +635,7 @@ function read_post_id(): int
 }
 
 /**
- * @return array{title: string, description: string, content: string, enable_prompt: bool, enable_agentic: bool}
+ * @return array{title: string, description: string, content: string, enable_prompt: bool, enable_agentic: bool, read_mode: bool}
  */
 function collect_input_from_post(): array
 {
@@ -644,6 +648,7 @@ function collect_input_from_post(): array
         'content' => is_string($content_raw) ? wp_unslash($content_raw) : '',
         'enable_prompt' => ($_POST['enable_prompt'] ?? null) !== null,
         'enable_agentic' => ($_POST['enable_agentic'] ?? null) !== null,
+        'read_mode' => ($_POST['read_mode'] ?? null) !== null,
     ];
 }
 

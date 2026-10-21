@@ -39,6 +39,10 @@ function register(): void
                 'content' => ['type' => 'string'],
                 'enable_prompt' => ['type' => 'boolean'],
                 'enable_agentic' => ['type' => 'boolean'],
+                'read_mode' => [
+                    'type' => 'boolean',
+                    'description' => 'Offer the skill while read mode is on. Only for skills that only read the site.',
+                ],
                 'enabled' => ['type' => 'boolean'],
             ],
             'required' => ['slug'],
@@ -151,23 +155,7 @@ function execute(array $input): array|WP_Error
         }
     }
 
-    if (array_key_exists('enable_prompt', $input)) {
-        $new = filter_var($input['enable_prompt'], FILTER_VALIDATE_BOOLEAN);
-        $current = boolval(get_post_meta($post->ID, Cpt\META_ENABLE_PROMPT, single: true));
-        if ($new !== $current) {
-            update_post_meta($post->ID, Cpt\META_ENABLE_PROMPT, $new);
-            $changed[] = 'enable_prompt';
-        }
-    }
-
-    if (array_key_exists('enable_agentic', $input)) {
-        $new = filter_var($input['enable_agentic'], FILTER_VALIDATE_BOOLEAN);
-        $current = boolval(get_post_meta($post->ID, Cpt\META_ENABLE_AGENTIC, single: true));
-        if ($new !== $current) {
-            update_post_meta($post->ID, Cpt\META_ENABLE_AGENTIC, $new);
-            $changed[] = 'enable_agentic';
-        }
-    }
+    $changed = [...$changed, ...update_flags($post, $input)];
 
     if (array_key_exists('enabled', $input)) {
         $new_status = filter_var($input['enabled'], FILTER_VALIDATE_BOOLEAN) ? 'publish' : 'draft';
@@ -182,4 +170,34 @@ function execute(array $input): array|WP_Error
         'slug' => $current_slug,
         'changed_fields' => $changed,
     ];
+}
+
+/**
+ * Store the boolean fields present in the input, each in its post meta.
+ *
+ * @param array<array-key, mixed> $input
+ * @return list<string> The fields whose value changed.
+ */
+function update_flags(\WP_Post $post, array $input): array
+{
+    $flags = [
+        'enable_prompt' => Cpt\META_ENABLE_PROMPT,
+        'enable_agentic' => Cpt\META_ENABLE_AGENTIC,
+        'read_mode' => Cpt\META_READ_MODE,
+    ];
+
+    $changed = [];
+    foreach ($flags as $field => $meta_key) {
+        if (!array_key_exists($field, $input)) {
+            continue;
+        }
+        $new = filter_var($input[$field], FILTER_VALIDATE_BOOLEAN);
+        $current = boolval(get_post_meta($post->ID, $meta_key, single: true));
+        if ($new !== $current) {
+            update_post_meta($post->ID, $meta_key, $new);
+            $changed[] = $field;
+        }
+    }
+
+    return $changed;
 }

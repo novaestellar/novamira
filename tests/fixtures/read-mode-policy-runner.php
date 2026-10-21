@@ -23,30 +23,63 @@ namespace Novamira\Features {
             {
                 return null;
             }
+
+            public function features_for_skill(string $slug): array
+            {
+                return [];
+            }
+
+            public function is_skill_active(string $slug): bool
+            {
+                return true;
+            }
         };
     }
 }
 
 namespace Novamira\Skills\Sources {
-    /** No skill source knows the requested slug, so skill-get falls back to the previous owner. */
+    /** The skills a scenario puts in $GLOBALS['test_skills']; any other slug falls back to the previous owner. */
     function find(string $slug): ?array
     {
-        return null;
+        return $GLOBALS['test_skills'][$slug] ?? null;
     }
 
-    /** A skill source, recording every time it is consulted (which runs the sources' loaders). */
+    /**
+     * A skill source, recording every time it is consulted (which runs the sources' loaders). Like the
+     * real one, it offers only the skills that declare read_mode while read mode is on.
+     */
     function discoverable(string $mode): array
     {
         $GLOBALS['skill_source_loads'][] = $mode;
-        return [[
-            'slug' => 'demo-skill',
-            'name' => 'Demo Skill',
-            'description' => 'A demo skill.',
-            'content' => 'Demo skill body.',
-            'source' => 'test',
-            'enable_prompt' => true,
-            'enable_agentic' => true,
-        ]];
+        $skills = [
+            [
+                'slug' => 'demo-skill',
+                'name' => 'Demo Skill',
+                'description' => 'A demo skill.',
+                'content' => 'Demo skill body.',
+                'source' => 'test',
+                'enable_prompt' => true,
+                'enable_agentic' => true,
+            ],
+            [
+                'slug' => 'read-skill',
+                'name' => 'Read Skill',
+                'description' => 'A skill that only reads.',
+                'content' => 'Read skill body.',
+                'source' => 'test',
+                'enable_prompt' => false,
+                'enable_agentic' => true,
+                'read_mode' => true,
+            ],
+        ];
+
+        return array_values(array_filter(
+            $skills,
+            static fn(array $skill): bool => (
+                ($mode === 'agentic' || $skill['enable_prompt'])
+                && (!\novamira_is_read_mode() || ($skill['read_mode'] ?? false) === true)
+            ),
+        ));
     }
 }
 
@@ -341,7 +374,7 @@ namespace {
             // The adapter's own meta-tools carry no MCP metadata.
             test_register('novamira-mcp-adapter/get-ability-info', 'novamira-mcp-adapter');
             test_register('novamira/list-design-library', 'design-system', ['mcp' => ['public' => true, 'type' => 'tool']]);
-            test_register('novamira/skill-get', 'skill', ['mcp' => ['public' => true, 'type' => 'prompt']]);
+            test_register('novamira/skill-prompt-skill-creator', 'skill', ['mcp' => ['public' => true, 'type' => 'prompt']]);
             unset($GLOBALS['abilities']['novamira/describe-schema']);
             $trio = [
                 'novamira-mcp-adapter/discover-abilities',
@@ -460,6 +493,8 @@ namespace {
             require $root . '/includes/abilities/list-directory.php';
             require $root . '/includes/abilities/agent-context.php';
             require $root . '/includes/abilities/discover-abilities.php';
+            require $root . '/includes/skills/abilities/skill-get.php';
+            \Novamira\Skills\Abilities\SkillGet\register();
 
             $abilities = [];
             foreach (novamira_read_mode_allowed_abilities() as $name) {
@@ -499,6 +534,34 @@ namespace {
             return [
                 'result' => wp_get_ability('novamira/skill-get')?->execute(['slug' => 'unknown-skill']),
                 'side_effect' => $GLOBALS['options']['previous_skill_get_side_effect'] ?? null,
+            ];
+        })(),
+        'skill-get-read-mode' => (static function () use ($root): array {
+            test_read_mode(true);
+            $GLOBALS['test_skills'] = [
+                'read-skill' => [
+                    'slug' => 'read-skill',
+                    'description' => 'A skill that only reads.',
+                    'content' => 'Read skill body.',
+                    'source' => 'test',
+                    'read_mode' => true,
+                ],
+                'write-skill' => [
+                    'slug' => 'write-skill',
+                    'description' => 'A skill that changes the site.',
+                    'content' => 'Write skill body.',
+                    'source' => 'test',
+                ],
+            ];
+            require $root . '/includes/skills/parser.php';
+            require $root . '/includes/skills/abilities/skill-get.php';
+
+            $read = \Novamira\Skills\Abilities\SkillGet\execute(['slug' => 'read-skill']);
+            $write = \Novamira\Skills\Abilities\SkillGet\execute(['slug' => 'write-skill']);
+
+            return [
+                'read' => is_array($read) ? ['found' => $read['found'], 'content' => $read['content']] : null,
+                'write' => $write instanceof WP_Error ? $write->get_error_code() : $write,
             ];
         })(),
         default => ['unknown_scenario' => $scenario],

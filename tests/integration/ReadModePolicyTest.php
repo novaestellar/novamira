@@ -22,6 +22,7 @@ final class ReadModePolicyTest extends TestCase
         'novamira-mcp-adapter/execute-ability',
         'novamira/read-file',
         'novamira/list-directory',
+        'novamira/skill-get',
     ];
 
     /** The base allowlist plus the data abilities that the stand-in for Novamira Pro adds. */
@@ -32,6 +33,7 @@ final class ReadModePolicyTest extends TestCase
         'novamira-mcp-adapter/execute-ability',
         'novamira/read-file',
         'novamira/list-directory',
+        'novamira/skill-get',
         'novamira/get-object',
         'novamira/query-objects',
         'novamira/get-options',
@@ -88,8 +90,7 @@ final class ReadModePolicyTest extends TestCase
             'novamira/gutenberg-get-finalization-url',
             'novamira/gutenberg-get-finalizer-runtime',
             'novamira/skill-prompt-skill-creator',
-            // Skills and Novamira Design are not offered in read mode.
-            'novamira/skill-get',
+            // Skill prompts and Novamira Design are not offered in read mode.
             'novamira/list-design-library',
             'novamira/get-active-design',
             'novamira/get-design',
@@ -159,6 +160,16 @@ final class ReadModePolicyTest extends TestCase
             ],
             self::runScenario('skill-get-previous-off'),
         );
+    }
+
+    public function testSkillGetServesOnlyReadModeSkillsInReadMode(): void
+    {
+        $result = self::runScenario('skill-get-read-mode');
+
+        self::assertTrue($result['read']['found']);
+        self::assertStringContainsString("read_mode: true\n", $result['read']['content']);
+        self::assertStringContainsString('Read skill body.', $result['read']['content']);
+        self::assertSame('novamira_read_mode', $result['write']);
     }
 
     public function testTheSingleFilterAddsAndRemovesAbilitiesAndDropsUnusableEntries(): void
@@ -297,7 +308,7 @@ final class ReadModePolicyTest extends TestCase
         // The tool list is the same with read mode on, so clients configured once keep working.
         self::assertSame($trio, $result['on']['tools']);
         // Resources and prompts come from the allowlist, never from discovery of public Abilities: the
-        // scenario registers skill-get and acme/write-prompt as prompts, and adds only acme/allowed-prompt to
+        // scenario registers a skill prompt and acme/write-prompt as prompts, and adds only acme/allowed-prompt to
         // the allowlist through the filter.
         self::assertSame([], $result['on']['resources']);
         self::assertSame(['acme/allowed-prompt'], $result['on']['prompts']);
@@ -358,9 +369,10 @@ final class ReadModePolicyTest extends TestCase
     /**
      * In read mode every agent-facing surface sends the read-mode guidance alone: the
      * novamira_discover_abilities_instructions chain (skill catalog, Pro's additions, the administrator's
-     * Context) and Visual's discovery filter are not applied, and no skill source is consulted.
+     * Context) and Visual's discovery filter are not applied. Only the skills that declare read_mode are
+     * listed, and no skill prompt is registered.
      */
-    public function testAgentSurfacesGetReadModeGuidanceOnlyAndNoSkills(): void
+    public function testAgentSurfacesGetReadModeGuidanceAndOnlyReadModeSkills(): void
     {
         $on = self::runScenario('agent-surfaces-on');
 
@@ -368,11 +380,20 @@ final class ReadModePolicyTest extends TestCase
             self::assertSame($on['read_mode_instructions'], $on[$surface], $surface);
             self::assertStringNotContainsString('INJECTED', $on[$surface], $surface);
         }
-        self::assertSame([], $on['agent_context_skills']);
+        self::assertStringContainsString("## Skills\n", $on['read_mode_instructions']);
+        self::assertStringContainsString('- read-skill: A skill that only reads.', $on['read_mode_instructions']);
+        self::assertStringNotContainsString('demo-skill', $on['read_mode_instructions']);
+        self::assertSame(
+            [['slug' => 'read-skill', 'description' => 'A skill that only reads.', 'source' => 'test']],
+            $on['agent_context_skills'],
+        );
         self::assertSame(['active' => true], $on['agent_context_read_mode']);
         self::assertSame([], $on['skill_prompts']);
-        self::assertSame([], $on['skill_source_loads']);
-        self::assertStringNotContainsStringIgnoringCase('skill', $on['agent_context_description']);
+        self::assertNotContains('prompt', $on['skill_source_loads']);
+        self::assertSame(
+            'Return transport-neutral Novamira read-mode guidance, environment, and read-mode skill summaries.',
+            $on['agent_context_description'],
+        );
     }
 
     public function testAgentSurfacesAreUnchangedOutsideReadMode(): void
@@ -384,7 +405,13 @@ final class ReadModePolicyTest extends TestCase
             self::assertStringContainsString('INJECTED: skill catalog, Pro memory preview.', $off[$surface], $surface);
         }
         self::assertStringContainsString('INJECTED: Visual extension guidance.', $off['visual_instructions']);
-        self::assertSame([['slug' => 'demo-skill', 'description' => 'A demo skill.', 'source' => 'test']], $off['agent_context_skills']);
+        self::assertSame(
+            [
+                ['slug' => 'demo-skill', 'description' => 'A demo skill.', 'source' => 'test'],
+                ['slug' => 'read-skill', 'description' => 'A skill that only reads.', 'source' => 'test'],
+            ],
+            $off['agent_context_skills'],
+        );
         self::assertSame(['active' => false], $off['agent_context_read_mode']);
         self::assertSame(['novamira/skill-prompt-demo-skill'], $off['skill_prompts']);
         self::assertSame(['agentic', 'prompt'], $off['skill_source_loads']);

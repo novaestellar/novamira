@@ -26,7 +26,9 @@ const USER_CPT_PRIORITY = 50;
  *
  * Each entry's loader must return a list of skill records of the shape:
  *   array{slug: string, name: string, description: string, content: string,
- *         enable_prompt?: bool, enable_agentic?: bool}
+ *         enable_prompt?: bool, enable_agentic?: bool, read_mode?: bool}
+ *
+ * A skill is offered in read mode only when its record sets `read_mode` to true.
  *
  * @return list<array{id: string, priority: int, label: string, loader: callable(): list<array<string,mixed>>}>
  */
@@ -83,7 +85,7 @@ function skills_from_source(array $source): array
  * `post_name` is empty (malformed title) are filtered out — the agent
  * never sees them; the admin UI still surfaces a warning.
  *
- * @return list<array{slug: string, name: string, description: string, content: string, enable_prompt: bool, enable_agentic: bool}>
+ * @return list<array{slug: string, name: string, description: string, content: string, enable_prompt: bool, enable_agentic: bool, read_mode: bool}>
  */
 function load_user_cpt(): array
 {
@@ -110,6 +112,7 @@ function load_user_cpt(): array
             'content' => $post->post_content,
             'enable_prompt' => boolval(get_post_meta($post->ID, Cpt\META_ENABLE_PROMPT, single: true)),
             'enable_agentic' => boolval(get_post_meta($post->ID, Cpt\META_ENABLE_AGENTIC, single: true)),
+            'read_mode' => boolval(get_post_meta($post->ID, Cpt\META_READ_MODE, single: true)),
         ];
     }
     return $result;
@@ -168,7 +171,8 @@ function all(): array
 /**
  * Return every skill where `description` is non-empty and the requested
  * activation flag is on. Used by the catalog renderer and the prompt
- * registrar — both skip skills that lack discovery context.
+ * registrar — both skip skills that lack discovery context. In read mode
+ * only skills that declare `read_mode` are returned.
  *
  * Default semantics differ per mode:
  *   - `enable_agentic` defaults to TRUE when a source does not set it
@@ -183,8 +187,12 @@ function discoverable(string $mode): array
 {
     $key = $mode === 'agentic' ? 'enable_agentic' : 'enable_prompt';
     $default = $mode === 'agentic';
+    $read_mode = function_exists('novamira_is_read_mode') && \novamira_is_read_mode();
     $result = [];
     foreach (all() as $skill) {
+        if ($read_mode && ($skill['read_mode'] ?? false) !== true) {
+            continue;
+        }
         $slug = is_string($skill['slug'] ?? null) ? $skill['slug'] : '';
         if (!Features\features()->is_skill_active($slug)) {
             continue;

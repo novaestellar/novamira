@@ -62,6 +62,7 @@ function register(): void
     if ($previous instanceof \WP_Ability) {
         wp_unregister_ability('novamira/skill-get');
     }
+    previous_owner($previous instanceof \WP_Ability ? $previous : null);
 
     wp_register_ability('novamira/skill-get', [
         'label' => __('Get Skill', domain: 'novamira'),
@@ -94,7 +95,7 @@ function register(): void
             ],
             'required' => ['found'],
         ],
-        'execute_callback' => static fn(array $input): array|WP_Error => execute_skill_get($input, $previous),
+        'execute_callback' => __NAMESPACE__ . '\\execute',
         'permission_callback' => 'novamira_permission_callback',
         'meta' => [
             'show_in_rest' => true,
@@ -108,6 +109,29 @@ function register(): void
     ]);
 }
 
+/**
+ * The Ability that owned `novamira/skill-get` before Novamira took it over, or null. Called with an
+ * argument it records the owner; called without one it returns the recorded owner.
+ */
+function previous_owner(\WP_Ability|false|null $owner = false): ?\WP_Ability
+{
+    static $previous = null;
+    if ($owner !== false) {
+        $previous = $owner;
+    }
+
+    return $previous;
+}
+
+/**
+ * Execute callback of `novamira/skill-get`. A named function, so read mode can recognize it as
+ * Novamira's own implementation.
+ */
+function execute(array $input): array|WP_Error
+{
+    return execute_skill_get($input, previous_owner());
+}
+
 function execute_skill_get(array $input, ?\WP_Ability $previous): array|WP_Error
 {
     $agent_slug = normalize_requested_slug((string) ($input['slug'] ?? ''));
@@ -117,6 +141,13 @@ function execute_skill_get(array $input, ?\WP_Ability $previous): array|WP_Error
 
     $skill = Sources\find($agent_slug);
     if ($skill !== null) {
+        if (
+            function_exists('novamira_is_read_mode')
+            && \novamira_is_read_mode()
+            && ($skill['read_mode'] ?? false) !== true
+        ) {
+            return \novamira_read_mode_blocked_error(sprintf("the skill '%s'", $agent_slug));
+        }
         $features = Features\features();
         $managers = $features->features_for_skill($agent_slug);
         if ($managers !== [] && !$features->is_skill_active($agent_slug)) {
@@ -165,6 +196,7 @@ function format_skill_response(array $skill): array
             'content' => (string) ($skill['content'] ?? ''),
             'enable_prompt' => $enable_prompt,
             'enable_agentic' => $enable_agentic,
+            'read_mode' => ($skill['read_mode'] ?? false) === true,
         ]),
         'enable_prompt' => $enable_prompt,
         'enable_agentic' => $enable_agentic,

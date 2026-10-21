@@ -247,20 +247,22 @@ function novamira_read_mode_no_workaround_text(): string
  * The complete agent instructions while read mode is active.
  *
  * In read mode agents receive only this guidance: no environment inventory, no development or page
- * building guidance, no skills, no design guidance, and nothing added through the
- * novamira_discover_abilities_instructions filter. The list of available abilities is built from the
- * abilities read mode allows right now, with the guidance line each one carries, so it never names an
- * ability that is not there.
+ * building guidance, no design guidance, only the skills that declare read_mode, and nothing added
+ * through the novamira_discover_abilities_instructions filter. The list of available abilities is built
+ * from the abilities read mode allows right now, with the guidance line each one carries, so it never
+ * names an ability that is not there.
  *
  * @return list<string>
  */
 function novamira_read_mode_instruction_lines(): array
 {
+    $skill_lines = novamira_read_mode_skill_lines();
     $available = [];
     foreach (novamira_read_mode_trusted_abilities() as $ability_name => $ability) {
         if (
             $ability['guidance'] === ''
             || novamira_is_read_mode() && !novamira_read_mode_permits_ability($ability_name)
+            || $ability_name === 'novamira/skill-get' && $skill_lines === []
         ) {
             continue;
         }
@@ -283,12 +285,51 @@ function novamira_read_mode_instruction_lines(): array
         ),
         '',
         __(
-            'Not available: running PHP or WP-CLI, creating, editing, or deleting files, uploads, admin access links, changing content, settings, users, plugins, or themes, Gutenberg and page-builder editing, the Block Editor Queue abilities (including block type reads), design systems, and skills.',
+            'Not available: running PHP or WP-CLI, creating, editing, or deleting files, uploads, admin access links, changing content, settings, users, plugins, or themes, Gutenberg and page-builder editing, the Block Editor Queue abilities (including block type reads), design systems, and skills other than those listed here.',
             domain: 'novamira',
         ),
         ...novamira_read_mode_availability_lines(),
+        ...$skill_lines,
         '',
         novamira_read_mode_no_workaround_text(),
+    ];
+}
+
+/**
+ * The read-mode skill catalog: the skills that declare read_mode, or no lines when there are none or
+ * read mode does not allow novamira/skill-get.
+ *
+ * @return list<string>
+ */
+function novamira_read_mode_skill_lines(): array
+{
+    if (
+        !function_exists('Novamira\\Skills\\Sources\\discoverable')
+        || novamira_is_read_mode() && !novamira_read_mode_permits_ability('novamira/skill-get')
+    ) {
+        return [];
+    }
+
+    $lines = [];
+    foreach (\Novamira\Skills\Sources\discoverable('agentic') as $skill) {
+        if (($skill['read_mode'] ?? false) !== true) {
+            continue;
+        }
+        $lines[] = sprintf('- %s: %s', (string) ($skill['slug'] ?? ''), trim((string) ($skill['description'] ?? '')));
+    }
+    if ($lines === []) {
+        return [];
+    }
+
+    return [
+        '',
+        '## Skills',
+        '',
+        __(
+            'If one of these skills matches the request, load it with novamira/skill-get before starting the work.',
+            domain: 'novamira',
+        ),
+        ...$lines,
     ];
 }
 

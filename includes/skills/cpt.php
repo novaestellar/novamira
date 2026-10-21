@@ -17,6 +17,8 @@ const META_ENABLE_PROMPT = '_enable_prompt';
 
 const META_ENABLE_AGENTIC = '_enable_agentic';
 
+const META_READ_MODE = '_read_mode';
+
 function register(): void
 {
     $capability = \novamira_manage_capability();
@@ -71,6 +73,13 @@ function register(): void
         'type' => 'boolean',
         'single' => true,
         'default' => true,
+        'show_in_rest' => false,
+        'auth_callback' => $auth,
+    ]);
+    register_post_meta(POST_TYPE, META_READ_MODE, [
+        'type' => 'boolean',
+        'single' => true,
+        'default' => false,
         'show_in_rest' => false,
         'auth_callback' => $auth,
     ]);

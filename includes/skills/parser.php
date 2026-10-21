@@ -52,7 +52,7 @@ function unquote_value(string $value): string
  * recognized fields. Blank lines, comment lines (`#`), lines without a colon,
  * and unknown keys are ignored (lenient). Unspecified fields keep their default.
  *
- * @return array{name: string, description: string, enable_prompt: bool, enable_agentic: bool}
+ * @return array{name: string, description: string, enable_prompt: bool, enable_agentic: bool, read_mode: bool}
  */
 function parse_frontmatter(string $frontmatter_raw): array
 {
@@ -60,6 +60,7 @@ function parse_frontmatter(string $frontmatter_raw): array
     $description = '';
     $enable_prompt = true;
     $enable_agentic = true;
+    $read_mode = false;
 
     foreach (explode(separator: "\n", string: $frontmatter_raw) as $line) {
         if (trim($line) === '' || str_starts_with(trim($line), '#')) {
@@ -84,6 +85,9 @@ function parse_frontmatter(string $frontmatter_raw): array
             case 'enable_agentic':
                 $enable_agentic = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? true;
                 break;
+            case 'read_mode':
+                $read_mode = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? false;
+                break;
 
             // Unknown keys silently ignored (lenient).
         }
@@ -94,6 +98,7 @@ function parse_frontmatter(string $frontmatter_raw): array
         'description' => $description,
         'enable_prompt' => $enable_prompt,
         'enable_agentic' => $enable_agentic,
+        'read_mode' => $read_mode,
     ];
 }
 
@@ -102,7 +107,7 @@ function parse_frontmatter(string $frontmatter_raw): array
  * via `parse_error`, missing fields fall back to sensible defaults, and unknown
  * keys are silently ignored.
  *
- * @return array{name: string, description: string, enable_prompt: bool, enable_agentic: bool, body: string, parse_error: ?string}
+ * @return array{name: string, description: string, enable_prompt: bool, enable_agentic: bool, read_mode: bool, body: string, parse_error: ?string}
  */
 function parse(string $raw): array
 {
@@ -113,6 +118,7 @@ function parse(string $raw): array
         'description' => '',
         'enable_prompt' => true,
         'enable_agentic' => true,
+        'read_mode' => false,
     ];
 
     $normalized = preg_replace(pattern: '/\r\n?/', replacement: "\n", subject: $raw);
@@ -141,6 +147,7 @@ function parse(string $raw): array
         'description' => $fields['description'],
         'enable_prompt' => $fields['enable_prompt'],
         'enable_agentic' => $fields['enable_agentic'],
+        'read_mode' => $fields['read_mode'],
         'body' => $body,
         'parse_error' => $parse_error,
     ];
@@ -169,16 +176,17 @@ function normalize_slug(string $raw): string
  * sanitized identifier (`sanitize_title($post_title)`), no prefix or
  * decoration applied.
  *
- * @param array{slug?: string, description?: string, enable_prompt?: bool, enable_agentic?: bool, content?: string} $skill
+ * @param array{slug?: string, description?: string, enable_prompt?: bool, enable_agentic?: bool, read_mode?: bool, content?: string} $skill
  */
 function render_skill_md(array $skill): string
 {
     return sprintf(
-        "---\nname: %s\ndescription: %s\nenable_prompt: %s\nenable_agentic: %s\n---\n\n%s",
+        "---\nname: %s\ndescription: %s\nenable_prompt: %s\nenable_agentic: %s\n%s---\n\n%s",
         $skill['slug'] ?? '',
         str_replace(search: "\n", replace: ' ', subject: $skill['description'] ?? ''),
         $skill['enable_prompt'] ?? false ? 'true' : 'false',
         $skill['enable_agentic'] ?? true ? 'true' : 'false',
+        $skill['read_mode'] ?? false ? "read_mode: true\n" : '',
         $skill['content'] ?? '',
     );
 }

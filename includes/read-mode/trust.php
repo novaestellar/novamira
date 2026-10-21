@@ -24,8 +24,9 @@ if (!defined('ABSPATH')) {
 /**
  * The abilities Novamira ships for read mode and, for each name, the callbacks of its implementation.
  *
- * Callbacks are named functions or static methods written as 'Class::method'. Excluded on purpose:
- * skills (skill-get, skill prompts) and Novamira Design, which read mode does not offer; every Gutenberg
+ * Callbacks are named functions or static methods written as 'Class::method'. skill-get is included and
+ * serves only the skills that declare read_mode. Excluded on purpose: skill prompts and Novamira Design,
+ * which read mode does not offer; every Gutenberg
  * (Block Editor Queue) Ability, including the block type reads gutenberg-list-block-types and
  * gutenberg-get-block-type, which read mode does not offer either, and among them get-content, get-pending-batch, list-pending-batches, get-finalization-url and
  * get-finalizer-runtime abilities (they mark stale batches, release leases, or create the finalizer
@@ -59,6 +60,11 @@ const NOVAMIRA_READ_MODE_BASE_ABILITIES = [
         'execute' => 'novamira_list_directory',
         'permission' => 'novamira_permission_callback',
     ],
+    // Skills that declare read_mode.
+    'novamira/skill-get' => [
+        'execute' => 'Novamira\\Skills\\Abilities\\SkillGet\\execute',
+        'permission' => 'novamira_permission_callback',
+    ],
 ];
 
 /** The longest guidance line an ability can add to the read-mode agent instructions. */
@@ -76,6 +82,7 @@ function novamira_read_mode_base_guidance(): array
         'novamira/agent-context' => __('this guidance and site details.', domain: 'novamira'),
         'novamira/read-file' => __('read a file inside the WordPress installation.', domain: 'novamira'),
         'novamira/list-directory' => __('list a folder inside the WordPress installation.', domain: 'novamira'),
+        'novamira/skill-get' => __('load one of the skills listed below.', domain: 'novamira'),
     ];
 }
 

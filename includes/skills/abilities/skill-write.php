@@ -38,6 +38,10 @@ function register(): void
                 'content' => ['type' => 'string'],
                 'enable_prompt' => ['type' => 'boolean'],
                 'enable_agentic' => ['type' => 'boolean'],
+                'read_mode' => [
+                    'type' => 'boolean',
+                    'description' => 'Offer the skill while read mode is on. Only for skills that only read the site.',
+                ],
                 'on_conflict' => ['type' => 'string', 'enum' => ['fail', 'replace', 'rename']],
             ],
             'required' => ['title', 'description', 'content'],
@@ -113,6 +117,7 @@ function execute(array $input): array|WP_Error
 
     $enable_prompt = filter_var($input['enable_prompt'] ?? true, FILTER_VALIDATE_BOOLEAN);
     $enable_agentic = filter_var($input['enable_agentic'] ?? true, FILTER_VALIDATE_BOOLEAN);
+    $read_mode = filter_var($input['read_mode'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
     $postarr = [
         'post_type' => Cpt\POST_TYPE,
@@ -147,6 +152,7 @@ function execute(array $input): array|WP_Error
 
     update_post_meta($post_id, Cpt\META_ENABLE_PROMPT, $enable_prompt);
     update_post_meta($post_id, Cpt\META_ENABLE_AGENTIC, $enable_agentic);
+    update_post_meta($post_id, Cpt\META_READ_MODE, $read_mode);
 
     return [
         'success' => true,

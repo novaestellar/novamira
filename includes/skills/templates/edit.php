@@ -25,6 +25,7 @@ $description = '';
 $content = '';
 $enable_prompt = true;
 $enable_agentic = true;
+$read_mode = false;
 $enabled = true;
 $post_id = 0;
 $validation_issues = [];
@@ -44,6 +45,7 @@ if (!$is_new) {
     $content = $post->post_content;
     $enable_prompt = boolval(get_post_meta($post_id, Cpt\META_ENABLE_PROMPT, single: true));
     $enable_agentic = boolval(get_post_meta($post_id, Cpt\META_ENABLE_AGENTIC, single: true));
+    $read_mode = boolval(get_post_meta($post_id, Cpt\META_READ_MODE, single: true));
     $enabled = $post->post_status === 'publish';
     $validation_issues = Admin\validation_issues($post)['issues'];
 }
@@ -241,6 +243,19 @@ $heading_title = match (true) {
                     </label>
                     <small class="description"><?php esc_html_e(
                         'Lets you call this skill directly from your AI client, instead of waiting for the AI to pick it.',
+                        domain: 'novamira',
+                    ); ?></small>
+                </p>
+                <p class="novamira-skills-checkbox-row">
+                    <label>
+                        <input type="checkbox" name="read_mode" value="1" <?php checked($read_mode); ?> />
+                        <strong><?php esc_html_e(
+                            'Available in Read Mode (Novamira Pro)',
+                            domain: 'novamira',
+                        ); ?></strong>
+                    </label>
+                    <small class="description"><?php esc_html_e(
+                        'Offers this skill while Read Mode is on. Use it for skills that only read the site.',
                         domain: 'novamira',
                     ); ?></small>
                 </p>

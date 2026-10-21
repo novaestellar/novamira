@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
  */
 function register_dynamic_abilities(): void
 {
-    // Read mode offers no skills, so their sources and loaders are not consulted at all.
+    // Read mode offers no skill prompts, so their sources and loaders are not consulted here.
     if (
         !function_exists('wp_register_ability')
         || function_exists('novamira_is_read_mode') && \novamira_is_read_mode()
