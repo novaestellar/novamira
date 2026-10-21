@@ -49,6 +49,12 @@ final class GutenbergFinalizerStatusUrlTest extends TestCase
         self::assertSame('rest_forbidden', $this->scenario()['other_salt']);
     }
 
+    public function testStatusResponseKeepsTheCallersExpiry(): void
+    {
+        $result = $this->scenario();
+        self::assertSame([$result['kept_expires']], $result['response_expires']);
+    }
+
     public function testRotationInvalidatesIssuedUrls(): void
     {
         self::assertSame('rest_forbidden', $this->scenario()['after_rotation']);
@@ -241,6 +247,15 @@ final class GutenbergFinalizerStatusUrlTest extends TestCase
             $GLOBALS['salt'] = 'site-salt';
             ($gb . 'rotate_finalizer_runtime_url_secret')();
             $result['after_rotation'] = $check($batch_args);
+            $kept_expires = time() + 120;
+            $response = ($gb . 'rest_poll_finalizer_runtime_status')(new WP_REST_Request([
+                'batch_id' => 10,
+                'expires' => $kept_expires,
+                'token' => ($gb . 'finalizer_runtime_url_token')(10, $kept_expires),
+            ]));
+            preg_match_all('/expires=(\d+)/', json_encode($response->data, JSON_UNESCAPED_SLASHES), $found);
+            $result['kept_expires'] = $kept_expires;
+            $result['response_expires'] = array_values(array_unique(array_map('intval', $found[1])));
             echo json_encode($result, JSON_THROW_ON_ERROR);
             PHP;
 

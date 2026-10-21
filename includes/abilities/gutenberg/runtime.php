@@ -80,12 +80,26 @@ function finalizer_runtime_url_is_valid(int $batch_id, int $expires, string $tok
 }
 
 /**
+ * The expiry for status URLs issued in this request. The status endpoints keep the expiry of the URL they were
+ * called with, so only the abilities issue URLs with a new expiry.
+ */
+function finalizer_runtime_url_expiry(?int $keep = null): int
+{
+    static $kept = null;
+    if ($keep !== null) {
+        $kept = $keep;
+    }
+
+    return $kept ?? (time() + FINALIZER_RUNTIME_URL_TTL_SECONDS);
+}
+
+/**
  * @return array<string, string|int>
  */
 function finalizer_runtime_url_args(?int $batch_id = null): array
 {
     $batch_id = $batch_id !== null && $batch_id > 0 ? $batch_id : 0;
-    $expires = time() + FINALIZER_RUNTIME_URL_TTL_SECONDS;
+    $expires = finalizer_runtime_url_expiry();
     $args = $batch_id > 0 ? ['batch_id' => $batch_id] : [];
     $args['expires'] = $expires;
     $args['token'] = finalizer_runtime_url_token($batch_id, $expires);
