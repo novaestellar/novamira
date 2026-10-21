@@ -18,6 +18,8 @@ if (!defined('ABSPATH')) {
     exit();
 }
 
+require_once dirname(__DIR__) . '/php-version-notice.php';
+
 require_once __DIR__ . '/state.php';
 require_once __DIR__ . '/PermissionGuard.php';
 require_once __DIR__ . '/trust.php';
@@ -257,6 +259,7 @@ function novamira_read_mode_no_workaround_text(): string
 function novamira_read_mode_instruction_lines(): array
 {
     $skill_lines = novamira_read_mode_skill_lines();
+    $php_notice_lines = novamira_php_version_notice_lines();
     $available = [];
     foreach (novamira_read_mode_trusted_abilities() as $ability_name => $ability) {
         if (
@@ -292,6 +295,7 @@ function novamira_read_mode_instruction_lines(): array
         ...$skill_lines,
         '',
         novamira_read_mode_no_workaround_text(),
+        ...($php_notice_lines === [] ? [] : ['', ...$php_notice_lines]),
     ];
 }
 

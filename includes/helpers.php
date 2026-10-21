@@ -13,6 +13,8 @@ if (!defined('ABSPATH')) {
     exit();
 }
 
+require_once __DIR__ . '/php-version-notice.php';
+
 /**
  * Quote a value for display in a POSIX shell command.
  *
@@ -1389,6 +1391,11 @@ function novamira_build_server_instructions()
             }
             $lines[] = '';
         }
+    }
+
+    $php_notice_lines = novamira_php_version_notice_lines();
+    if ($php_notice_lines !== []) {
+        $lines = array_merge($lines, $php_notice_lines, ['']);
     }
 
     $lines = array_merge($lines, [
