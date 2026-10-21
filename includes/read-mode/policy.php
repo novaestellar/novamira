@@ -326,7 +326,7 @@ function novamira_read_mode_skill_lines(): array
         '## Skills',
         '',
         __(
-            'If one of these skills matches the request, load it with novamira/skill-get before starting the work. When a skill includes steps that change the site, tell the user before you start which parts you cannot do while Read Mode is on, and do the rest.',
+            'If one of these skills matches the request, load it with novamira/skill-get before starting the work.',
             domain: 'novamira',
         ),
         ...$lines,

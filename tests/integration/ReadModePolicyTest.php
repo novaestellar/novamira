@@ -382,10 +382,6 @@ final class ReadModePolicyTest extends TestCase
         }
         self::assertStringContainsString("## Skills\n", $on['read_mode_instructions']);
         self::assertStringContainsString('- read-skill: A skill that only reads.', $on['read_mode_instructions']);
-        self::assertStringContainsString(
-            'tell the user before you start which parts you cannot do while Read Mode is on',
-            $on['read_mode_instructions'],
-        );
         self::assertStringNotContainsString('demo-skill', $on['read_mode_instructions']);
         self::assertSame(
             [['slug' => 'read-skill', 'description' => 'A skill that only reads.', 'source' => 'test']],
