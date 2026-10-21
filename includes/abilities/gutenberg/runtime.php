@@ -33,7 +33,7 @@ function finalizer_runtime_startup_instruction(): string
     );
 }
 
-function finalizer_runtime_poll_token(): string
+function finalizer_runtime_url_secret(): string
 {
     /** @var mixed $option_value */
     $option_value = get_option(FINALIZER_RUNTIME_POLL_TOKEN_OPTION, default_value: '');
@@ -41,23 +41,42 @@ function finalizer_runtime_poll_token(): string
         return $option_value;
     }
 
-    $token = rtrim(
+    $secret = rtrim(
         strtr(base64_encode(random_bytes(FINALIZER_RUNTIME_POLL_TOKEN_BYTES)), from: '+/', to: '-_'),
         characters: '=',
     );
-    update_option(FINALIZER_RUNTIME_POLL_TOKEN_OPTION, $token, autoload: false);
+    update_option(FINALIZER_RUNTIME_POLL_TOKEN_OPTION, $secret, autoload: false);
 
-    return $token;
+    return $secret;
 }
 
-function finalizer_runtime_batch_token(int $batch_id): string
+function rotate_finalizer_runtime_url_secret(): void
 {
-    return substr(hash_hmac('sha256', (string) $batch_id, finalizer_runtime_poll_token()), offset: 0, length: 32);
+    delete_option(FINALIZER_RUNTIME_POLL_TOKEN_OPTION);
 }
 
-function finalizer_runtime_batch_token_is_valid(int $batch_id, string $token): bool
+function finalizer_runtime_url_token(int $batch_id, int $expires): string
 {
-    return $batch_id > 0 && $token !== '' && hash_equals(finalizer_runtime_batch_token($batch_id), $token);
+    return substr(
+        hash_hmac(
+            'sha256',
+            'finalizer-runtime|' . $batch_id . '|' . $expires,
+            finalizer_runtime_url_secret() . wp_salt('auth'),
+        ),
+        offset: 0,
+        length: 32,
+    );
+}
+
+/**
+ * The status URL arguments are only valid for the batch they were issued for (0 for the runtime alone).
+ */
+function finalizer_runtime_url_is_valid(int $batch_id, int $expires, string $token): bool
+{
+    return $batch_id >= 0
+    && $expires >= time()
+    && $token !== ''
+    && hash_equals(finalizer_runtime_url_token($batch_id, $expires), $token);
 }
 
 /**
@@ -65,11 +84,11 @@ function finalizer_runtime_batch_token_is_valid(int $batch_id, string $token): b
  */
 function finalizer_runtime_url_args(?int $batch_id = null): array
 {
-    $args = ['token' => finalizer_runtime_poll_token()];
-    if ($batch_id !== null && $batch_id > 0) {
-        $args['batch_id'] = $batch_id;
-        $args['batch_token'] = finalizer_runtime_batch_token($batch_id);
-    }
+    $batch_id = $batch_id !== null && $batch_id > 0 ? $batch_id : 0;
+    $expires = time() + FINALIZER_RUNTIME_URL_TTL_SECONDS;
+    $args = $batch_id > 0 ? ['batch_id' => $batch_id] : [];
+    $args['expires'] = $expires;
+    $args['token'] = finalizer_runtime_url_token($batch_id, $expires);
 
     return $args;
 }

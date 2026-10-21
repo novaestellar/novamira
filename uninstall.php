@@ -70,6 +70,7 @@ function novamira_uninstall_current_site(array $plan): void
     }
 
     delete_option('novamira_feature_preferences');
+    delete_option('novamira_gb_finalizer_poll_token');
     // Cache of the specializations Pro publishes: never user data, always removed.
     delete_option('novamira_specializations');
 

@@ -104,11 +104,22 @@ function rest_can_access_dashboard(): bool|WP_Error
 
 function rest_can_poll_finalizer_runtime(WP_REST_Request $request): bool|WP_Error
 {
+    $batch_id = rest_query_int_param($request, name: 'batch_id');
+    $expires = rest_query_int_param($request, name: 'expires');
     $token = rest_query_string_param($request, name: 'token');
-    if ($token === '' || !hash_equals(finalizer_runtime_poll_token(), $token)) {
-        return new WP_Error('rest_forbidden', 'The Block Editor Queue status token is invalid.', [
-            'status' => 403,
-        ]);
+    if ($expires > 0 && $expires < time()) {
+        return new WP_Error(
+            'gutenberg_finalizer_status_url_expired',
+            'This Block Editor Queue status URL has expired. Call novamira/gutenberg-get-pending-batch for the batch, or novamira/gutenberg-get-finalizer-runtime when no batch is involved, to get a new sse_url and poll_url.',
+            ['status' => 403],
+        );
+    }
+    if (!finalizer_runtime_url_is_valid($batch_id, $expires, $token)) {
+        return new WP_Error(
+            'rest_forbidden',
+            'The Block Editor Queue status URL is invalid. Call novamira/gutenberg-get-pending-batch for the batch, or novamira/gutenberg-get-finalizer-runtime when no batch is involved, to get a new sse_url and poll_url.',
+            ['status' => 403],
+        );
     }
 
     return true;
@@ -221,10 +232,7 @@ function rest_finalizer_runtime_heartbeat(): WP_REST_Response|WP_Error
 /** @return WP_REST_Response|WP_Error */
 function rest_poll_finalizer_runtime_status(WP_REST_Request $request): WP_REST_Response|WP_Error
 {
-    return rest_response(rest_finalizer_runtime_status_payload(
-        rest_query_int_param($request, name: 'batch_id'),
-        rest_query_string_param($request, name: 'batch_token'),
-    ));
+    return rest_response(rest_finalizer_runtime_status_payload(rest_query_int_param($request, name: 'batch_id')));
 }
 
 function rest_stream_finalizer_runtime_events(WP_REST_Request $request): void
@@ -241,10 +249,7 @@ function rest_stream_finalizer_runtime_events(WP_REST_Request $request): void
     rest_flush_sse();
 
     while (!connection_aborted()) {
-        $payload = rest_finalizer_runtime_status_payload($batch_id, rest_query_string_param(
-            $request,
-            name: 'batch_token',
-        ));
+        $payload = rest_finalizer_runtime_status_payload($batch_id);
         if (is_wp_error($payload)) {
             rest_sse_event('error', [
                 'code' => $payload->get_error_code(),
@@ -276,7 +281,7 @@ function rest_stream_finalizer_runtime_events(WP_REST_Request $request): void
 /**
  * @return array<string, mixed>|WP_Error
  */
-function rest_finalizer_runtime_status_payload(int $batch_id, string $batch_token): array|WP_Error
+function rest_finalizer_runtime_status_payload(int $batch_id): array|WP_Error
 {
     mark_stale_drafts();
 
@@ -294,18 +299,54 @@ function rest_finalizer_runtime_status_payload(int $batch_id, string $batch_toke
         ]);
     }
 
-    if (!novamira_current_user_can_manage() && !finalizer_runtime_batch_token_is_valid($batch->ID, $batch_token)) {
-        return new WP_Error('rest_forbidden', 'The Block Editor Queue batch status token is invalid.', [
-            'status' => 403,
-        ]);
-    }
-
     $batch = refresh_batch_runtime_state($batch);
+    if (!novamira_current_user_can_manage()) {
+        return rest_untitled_batch_status_payload($batch);
+    }
 
     return [
         'batch' => shape_batch($batch),
         'finalizer_runtime' => finalizer_runtime_status($batch),
         'user_instruction' => user_instruction($batch),
+    ];
+}
+
+/**
+ * The batch status for a request authorized by the URL token alone: statuses, counts and error codes, without
+ * the batch label, the agent note, target titles, change summaries or error messages. The
+ * gutenberg-get-pending-batch ability returns the full batch.
+ *
+ * @return array<string, mixed>
+ */
+function rest_untitled_batch_status_payload(WP_Post $batch): array
+{
+    $untitled = clone $batch;
+    $untitled->post_title = '';
+    $untitled->post_excerpt = '';
+
+    $shaped = shape_batch($untitled);
+    unset($shaped['last_error']);
+    $shaped['details_ability'] = 'novamira/gutenberg-get-pending-batch';
+    /** @var list<array<string, mixed>> $items */
+    $items = is_array($shaped['items'] ?? null) ? $shaped['items'] : [];
+    $shaped['items'] = array_map(
+        static function (array $item): array {
+            unset($item['target_title'], $item['change_summary']);
+            /** @var list<array<string, mixed>> $rows */
+            $rows = is_array($item['validation_errors'] ?? null) ? $item['validation_errors'] : [];
+            $item['validation_errors'] = array_map(static function (array $row): array {
+                unset($row['target_title'], $row['message']);
+                return $row;
+            }, $rows);
+            return $item;
+        },
+        $items,
+    );
+
+    return [
+        'batch' => $shaped,
+        'finalizer_runtime' => finalizer_runtime_status($untitled),
+        'user_instruction' => user_instruction($untitled),
     ];
 }
 

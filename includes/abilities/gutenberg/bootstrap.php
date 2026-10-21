@@ -129,6 +129,8 @@ const FINALIZER_RUNTIME_POLL_TOKEN_OPTION = 'novamira_gb_finalizer_poll_token';
 
 const FINALIZER_RUNTIME_POLL_TOKEN_BYTES = 16;
 
+const FINALIZER_RUNTIME_URL_TTL_SECONDS = 3600;
+
 // Allow for background tabs whose heartbeat timers run only once per minute.
 const FINALIZER_RUNTIME_STALE_SECONDS = 150;
 

@@ -276,7 +276,9 @@ add_action('admin_post_novamira_download_mcpb', callback: 'novamira_handle_downl
 function novamira_unschedule_gutenberg_cron(): void
 {
     require_once __DIR__ . '/includes/abilities/gutenberg/bootstrap.php';
+    require_once __DIR__ . '/includes/abilities/gutenberg/runtime.php';
     \Novamira\Abilities\Gutenberg\unschedule_cleanup();
+    \Novamira\Abilities\Gutenberg\rotate_finalizer_runtime_url_secret();
 }
 
 function novamira_boot_design_feature(): void
@@ -311,7 +313,9 @@ function novamira_boot_block_editor_queue_feature(): void
 function novamira_deactivate_block_editor_queue_feature(): void
 {
     require_once __DIR__ . '/includes/abilities/gutenberg/bootstrap.php';
+    require_once __DIR__ . '/includes/abilities/gutenberg/runtime.php';
     \Novamira\Abilities\Gutenberg\unschedule_cleanup();
+    \Novamira\Abilities\Gutenberg\rotate_finalizer_runtime_url_secret();
 }
 
 function novamira_load_gutenberg_runtime(): void
